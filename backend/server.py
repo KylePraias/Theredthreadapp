@@ -495,52 +495,58 @@ async def register_organization(data: OrganizationRegister):
 
 @api_router.post("/auth/verify-email", response_model=TokenResponse)
 async def verify_email(data: VerifyEmailRequest):
-    """Verify email with code"""
-    # Find the verification code
-    codes_ref = db.collection('verification_codes')
-    query = codes_ref.where('email', '==', data.email).where('code', '==', data.code).where('used', '==', False).limit(1)
-    docs = list(query.stream())
+    """Verify email using Firebase oob_code from verification link"""
+    import requests
     
-    if not docs:
-        raise HTTPException(status_code=400, detail="Invalid verification code")
-    
-    verification = deserialize_from_firestore(docs[0].to_dict())
-    
-    if datetime.now(timezone.utc) > verification['expires_at']:
-        raise HTTPException(status_code=400, detail="Verification code expired")
-    
-    # Mark code as used
-    db.collection('verification_codes').document(verification['id']).update({'used': True})
-    
-    # Find and update user as verified
-    users_ref = db.collection('users')
-    user_query = users_ref.where('email', '==', data.email).limit(1)
-    user_docs = list(user_query.stream())
-    
-    if not user_docs:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    user_doc = user_docs[0]
-    db.collection('users').document(user_doc.id).update({'is_verified': True})
-    
-    # Get updated user
-    user_dict = deserialize_from_firestore(db.collection('users').document(user_doc.id).get().to_dict())
-    user = User(**user_dict)
-    
-    # If organization, notify admin
-    if user.user_type == "organization" and user.organization_profile:
-        await send_admin_notification(
-            user.organization_profile.name,
-            user.email
+    try:
+        # Use Firebase REST API to apply the action code (verify email)
+        # This validates the oobCode and marks the email as verified in Firebase Auth
+        verify_url = f"https://identitytoolkit.googleapis.com/v1/accounts:update?key={FIREBASE_API_KEY}"
+        
+        response = requests.post(verify_url, json={
+            "oobCode": data.oob_code
+        })
+        
+        if response.status_code != 200:
+            error_data = response.json()
+            error_message = error_data.get('error', {}).get('message', 'Verification failed')
+            logger.error("Firebase verification failed: %s", error_message)
+            raise HTTPException(status_code=400, detail=f"Verification failed: {error_message}")
+        
+        # Find user in Firestore and mark as verified
+        users_ref = db.collection('users')
+        user_query = users_ref.where('email', '==', data.email).limit(1)
+        user_docs = list(user_query.stream())
+        
+        if not user_docs:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        user_doc = user_docs[0]
+        db.collection('users').document(user_doc.id).update({'is_verified': True})
+        
+        # Get updated user
+        user_dict = deserialize_from_firestore(db.collection('users').document(user_doc.id).get().to_dict())
+        user = User(**user_dict)
+        
+        # If organization, notify admin
+        if user.user_type == "organization" and user.organization_profile:
+            await send_admin_notification(
+                user.organization_profile.name,
+                user.email
+            )
+        
+        # Create token
+        token = create_access_token({"sub": user.id})
+        
+        return TokenResponse(
+            access_token=token,
+            user=user_to_response(user)
         )
-    
-    # Create token
-    token = create_access_token({"sub": user.id})
-    
-    return TokenResponse(
-        access_token=token,
-        user=user_to_response(user)
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Email verification error: %s", str(e))
+        raise HTTPException(status_code=400, detail="Verification failed. Please try again.")
 
 @api_router.post("/auth/resend-verification", response_model=MessageResponse)
 async def resend_verification(data: ResendVerificationRequest):
