@@ -724,6 +724,98 @@ def test_login_after_verification(result):
     except Exception as e:
         result.log_failure("Login After Verification", str(e))
 
+def test_check_verification_endpoint(result):
+    """Test the new /api/auth/check-verification endpoint"""
+    try:
+        # Test 1: Check verification status for non-existent user
+        check_data = {"email": "nonexistent@example.com"}
+        response = make_request("POST", "/auth/check-verification", check_data)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            if "is_verified" in response_data and response_data["is_verified"] == False:
+                result.log_success("Check Verification - Non-existent user returns is_verified: false")
+            else:
+                result.log_failure("Check Verification", f"Expected is_verified: false, got: {response_data}")
+        else:
+            result.log_failure("Check Verification - Non-existent user", f"Status {response.status_code}")
+        
+        # Test 2: Create an unverified user and check their status
+        test_email = f"checkverify_{int(time.time())}@example.com"
+        register_data = {
+            "email": test_email,
+            "password": "testpassword123!",
+            "display_name": "Check Verify Test User"
+        }
+        
+        register_response = make_request("POST", "/auth/register/individual", register_data)
+        if register_response.status_code == 200:
+            # Check verification status for unverified user
+            check_data = {"email": test_email}
+            response = make_request("POST", "/auth/check-verification", check_data)
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                if "is_verified" in response_data and response_data["is_verified"] == False:
+                    result.log_success("Check Verification - Unverified user returns is_verified: false")
+                else:
+                    result.log_failure("Check Verification", f"Expected is_verified: false for unverified user, got: {response_data}")
+            else:
+                result.log_failure("Check Verification - Unverified user", f"Status {response.status_code}")
+            
+            # Test 3: If we have a verification link, verify the user and check again
+            register_result = register_response.json()
+            if "verification_link" in register_result and "token=" in register_result["verification_link"]:
+                verification_link = register_result["verification_link"]
+                token_start = verification_link.find("token=") + 6
+                token_end = verification_link.find("&", token_start)
+                if token_end == -1:
+                    token = verification_link[token_start:]
+                else:
+                    token = verification_link[token_start:token_end]
+                
+                # Verify the user
+                verify_data = {"email": test_email, "token": token}
+                verify_response = make_request("POST", "/auth/verify-email", verify_data)
+                
+                if verify_response.status_code == 200:
+                    # Now check verification status for verified user
+                    check_data = {"email": test_email}
+                    response = make_request("POST", "/auth/check-verification", check_data)
+                    
+                    if response.status_code == 200:
+                        response_data = response.json()
+                        if "is_verified" in response_data and response_data["is_verified"] == True:
+                            result.log_success("Check Verification - Verified user returns is_verified: true")
+                        else:
+                            result.log_failure("Check Verification", f"Expected is_verified: true for verified user, got: {response_data}")
+                    else:
+                        result.log_failure("Check Verification - Verified user", f"Status {response.status_code}")
+                else:
+                    result.log_failure("Check Verification Setup", "Could not verify user for testing")
+            else:
+                result.log_success("Check Verification - No verification link available (production mode)")
+        else:
+            result.log_failure("Check Verification Setup", "Could not create test user")
+        
+        # Test 4: Test with missing email parameter
+        response = make_request("POST", "/auth/check-verification", {})
+        if response.status_code == 422:  # Validation error
+            result.log_success("Check Verification - Missing email parameter validation")
+        else:
+            result.log_failure("Check Verification - Validation", f"Expected 422 for missing email, got {response.status_code}")
+        
+        # Test 5: Test with invalid email format
+        invalid_data = {"email": "invalid-email"}
+        response = make_request("POST", "/auth/check-verification", invalid_data)
+        if response.status_code == 422:  # Validation error
+            result.log_success("Check Verification - Invalid email format validation")
+        else:
+            result.log_failure("Check Verification - Email validation", f"Expected 422 for invalid email, got {response.status_code}")
+            
+    except Exception as e:
+        result.log_failure("Check Verification Endpoint", str(e))
+
 def run_all_tests():
     """Run comprehensive backend API tests for email verification link system"""
     print("Starting Mutual Aid App Backend API Tests - Email Verification Links")
