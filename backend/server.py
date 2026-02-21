@@ -14,6 +14,7 @@ from jose import JWTError, jwt
 import random
 import string
 import requests
+from fastapi.responses import HTMLResponse
 
 # Firebase imports
 import firebase_admin
@@ -327,66 +328,112 @@ def user_to_response(user: User) -> UserResponse:
         created_at=user.created_at
     )
 
-async def send_verification_email(email: str, continue_url: str = None):
-    """
-    Generate an email verification link using Firebase Authentication.
-    Firebase Auth handles the email sending when the user is created.
-    For this app, we'll use a custom approach with Firebase's action code system.
-    """
+@api_router.get("/auth/verify-email-complete")
+async def verify_email_complete(token: str, email: str):
+    """Handle email verification link click"""
     try:
-        # Get the Firebase user to ensure they exist
-        try:
-            firebase_user = firebase_auth.get_user_by_email(email)
-        except firebase_auth.UserNotFoundError:
-            logger.error("Firebase user not found for email: %s", email)
-            return None
-        
-        # Generate a custom email action link
-        # Note: The domain must be authorized in Firebase Console
-        # For development, we'll log the link
-        if not continue_url:
-            continue_url = os.environ.get('FRONTEND_URL', 'https://email-db-switch.preview.emergentagent.com')
-        
-        # Use Firebase's password reset link generation as a workaround
-        # since it doesn't require domain authorization for the action URL
-        # We'll repurpose this for email verification
-        try:
-            # Try to generate email verification link
-            action_code_settings = firebase_auth.ActionCodeSettings(
-                url=continue_url,
-                handle_code_in_app=True,
-            )
-            link = firebase_auth.generate_email_verification_link(email, action_code_settings)
-            logger.info("Verification link generated for: %s", email)
-            logger.info("Link: %s", link)
-            return link
-        except Exception as link_error:
-            # If domain not authorized, generate a simple verification token
-            logger.warning("Could not generate Firebase link (domain may not be authorized): %s", str(link_error))
-            
-            # Generate a simple verification token as fallback
-            import secrets
-            verification_token = secrets.token_urlsafe(32)
-            
-            # Store the token in Firestore
-            db.collection('email_verification_tokens').add({
-                'email': email,
-                'token': verification_token,
-                'firebase_uid': firebase_user.uid,
-                'created_at': datetime.now(timezone.utc).isoformat(),
-                'expires_at': (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
-                'used': False
-            })
-            
-            # Build verification URL
-            verification_link = f"{continue_url}/verify-email-complete?token={verification_token}&email={email}"
-            logger.info("Fallback verification link generated for: %s", email)
-            logger.info("Link: %s", verification_link)
-            
-            return verification_link
-            
+        tokens_ref = db.collection('email_verification_tokens')
+        query = tokens_ref.where('email', '==', email).where('token', '==', token).where('used', '==', False).limit(1)
+        token_docs = list(query.stream())
+
+        if not token_docs:
+            return HTMLResponse("<h2>❌ Invalid or already used verification link.</h2>")
+
+        token_data = deserialize_from_firestore(token_docs[0].to_dict())
+        expires_at = token_data.get('expires_at')
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+        if datetime.now(timezone.utc) > expires_at:
+            return HTMLResponse("<h2>❌ Verification link has expired. Please request a new one.</h2>")
+
+        # Mark token as used
+        token_docs[0].reference.update({'used': True})
+
+        # Mark user as verified
+        users_ref = db.collection('users')
+        user_query = users_ref.where('email', '==', email).limit(1)
+        user_docs = list(user_query.stream())
+        if user_docs:
+            db.collection('users').document(user_docs[0].id).update({'is_verified': True})
+
+        return HTMLResponse("""
+            <div style="font-family: Arial; text-align: center; padding: 50px;">
+                <h2>✅ Email verified successfully!</h2>
+                <p>You can now go back to the app and log in.</p>
+            </div>
+        """)
+
     except Exception as e:
-        logger.error("Failed to generate verification link: %s", str(e))
+        logger.error("Verification error: %s", str(e))
+        return HTMLResponse("<h2>❌ Verification failed. Please try again.</h2>")
+
+async def send_verification_email(email: str, continue_url: str = None):
+    """Send verification email via Gmail SMTP"""
+    try:
+        firebase_user = firebase_auth.get_user_by_email(email)
+    except firebase_auth.UserNotFoundError:
+        logger.error("Firebase user not found for email: %s", email)
+        return None
+
+    if not continue_url:
+        continue_url = os.environ.get('FRONTEND_URL', 'http://localhost:8001')
+
+    try:
+        # Generate verification token
+        import secrets
+        verification_token = secrets.token_urlsafe(32)
+
+        # Store token in Firestore
+        db.collection('email_verification_tokens').add({
+            'email': email,
+            'token': verification_token,
+            'firebase_uid': firebase_user.uid,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'expires_at': (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+            'used': False
+        })
+
+        verification_link = f"http://192.168.2.27:8001/api/auth/verify-email-complete?token={verification_token}&email={email}"
+        
+        # Send email via Gmail SMTP
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        gmail_address = os.environ.get('GMAIL_ADDRESS')
+        gmail_password = os.environ.get('GMAIL_APP_PASSWORD')
+
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = "Verify your Red Thread account"
+        msg['From'] = gmail_address
+        msg['To'] = email
+
+        html_body = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2>Welcome to The Red Thread!</h2>
+            <p>Click the button below to verify your email address:</p>
+            <a href="{verification_link}" 
+               style="background-color: #e63946; color: white; padding: 12px 24px; 
+                      text-decoration: none; border-radius: 6px; display: inline-block;">
+                Verify Email
+            </a>
+            <p>Or copy and paste this link into your browser:</p>
+            <p>{verification_link}</p>
+            <p>This link expires in 24 hours.</p>
+        </div>
+        """
+
+        msg.attach(MIMEText(html_body, 'html'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(gmail_address, gmail_password)
+            server.send_message(msg)
+
+        logger.info("Verification email sent to: %s", email)
+        return verification_link
+
+    except Exception as e:
+        logger.error("Failed to send verification email: %s", str(e))
         return None
 
 async def send_admin_notification(org_name: str, org_email: str):
