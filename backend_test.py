@@ -840,6 +840,7 @@ def run_all_tests():
     test_individual_registration(result)
     test_organization_registration(result)
     test_email_verification_endpoint(result)
+    test_check_verification_endpoint(result)  # New test for check-verification endpoint
     test_resend_verification(result)
     test_login_after_verification(result)
     test_google_oauth_endpoints(result)
