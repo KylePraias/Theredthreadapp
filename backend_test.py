@@ -302,7 +302,7 @@ def create_test_organization_user(result):
         test_email = f"eventorg_{int(time.time())}@example.com"
         register_data = {
             "email": test_email,
-            "password": "testpassword123",
+            "password": "testpassword123!",  # Updated to include special character
             "name": "Event Test Organization",
             "description": "Organization for testing events",
             "contact_email": test_email,
