@@ -10,11 +10,11 @@ export default function WelcomeScreen() {
   const { user, isInitialized } = useAuthStore();
 
   useEffect(() => {
+    // Only auto-redirect if user is logged in when screen first loads
+    // Don't redirect if user just logged out (user becomes null)
     if (isInitialized && user) {
       // Route based on user type and status
-      if (user.user_type === 'admin') {
-        router.replace('/admin');
-      } else if (user.user_type === 'organization' && user.approval_status === 'pending') {
+      if (user.user_type === 'organization' && user.approval_status === 'pending') {
         router.replace('/(auth)/pending-approval');
       } else if (user.user_type === 'organization' && user.approval_status === 'rejected') {
         router.replace('/(auth)/rejected');
@@ -22,7 +22,7 @@ export default function WelcomeScreen() {
         router.replace('/(tabs)');
       }
     }
-  }, [user, isInitialized]);
+  }, [isInitialized]); // Only depend on isInitialized, not user - so it only runs on initial load
 
   return (
     <View style={styles.container}>
