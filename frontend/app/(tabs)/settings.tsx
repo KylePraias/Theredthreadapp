@@ -48,8 +48,13 @@ export default function SettingsScreen() {
       return;
     }
 
-    if (newPassword.length < 4) {
-      Alert.alert('Error', 'Password must be at least 4 characters');
+    // Password validation
+    const hasMinLength = newPassword.length >= 8;
+    const hasNumber = /\d/.test(newPassword);
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(newPassword);
+    
+    if (!hasMinLength || !hasNumber || !hasSpecialChar) {
+      Alert.alert('Error', 'Password must be at least 8 characters with a number and special character');
       return;
     }
 
