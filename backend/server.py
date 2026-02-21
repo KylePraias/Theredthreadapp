@@ -18,6 +18,8 @@ from fastapi.responses import HTMLResponse
 
 import re
 
+import re
+
 # Firebase imports
 import firebase_admin
 from firebase_admin import credentials, firestore, auth as firebase_auth
