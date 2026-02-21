@@ -739,6 +739,12 @@ def run_all_tests():
     # Test authentication flows
     print("\n🔐 Testing Authentication...")
     admin_login_success = test_admin_login(result)
+    test_admin_login_grandfathered(result)
+    
+    # Test password validation requirements
+    print("\n🔒 Testing Password Validation...")
+    test_password_validation(result)
+    
     test_individual_registration(result)
     test_organization_registration(result)
     test_email_verification_endpoint(result)
