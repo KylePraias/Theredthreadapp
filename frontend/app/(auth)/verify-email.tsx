@@ -20,7 +20,7 @@ export default function VerifyEmailScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [verificationLink, setVerificationLink] = useState<string | null>(null);
-  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+  const [isVerified, setIsVerified] = useState(false);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if we have an oobCode from the URL (user clicked verification link)
@@ -32,28 +32,21 @@ export default function VerifyEmailScreen() {
 
   // Poll to check if email has been verified
   useEffect(() => {
+    if (!params.email || isLoading || isVerified) return;
+
     const checkVerificationStatus = async () => {
-      if (!params.email || isLoading) return;
-      
       try {
-        // Try to login - if successful, email is verified
-        const response = await authApi.login({ email: params.email, password: '' });
-        // If we get here without error, something went wrong with our logic
-      } catch (error: any) {
-        const message = error.response?.data?.detail || '';
-        // If the error is "Please verify your email first", still not verified
-        // If the error is "Invalid credentials", the email is verified but password is wrong
-        if (message === 'Invalid credentials') {
-          // Email is verified! Redirect to login
+        const response = await authApi.checkVerificationStatus(params.email);
+        if (response.is_verified) {
+          // Email is verified! Stop polling and show the sign in button
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
           }
-          Alert.alert(
-            'Email Verified!',
-            'Your email has been verified. Please sign in to continue.',
-            [{ text: 'Sign In', onPress: () => router.replace('/(auth)/login') }]
-          );
+          setIsVerified(true);
         }
+      } catch (error) {
+        // Ignore errors during polling
+        console.log('Polling error:', error);
       }
     };
 
@@ -65,7 +58,7 @@ export default function VerifyEmailScreen() {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [params.email, isLoading]);
+  }, [params.email, isLoading, isVerified]);
 
   // Handle deep link for email verification
   useEffect(() => {
@@ -147,37 +140,58 @@ export default function VerifyEmailScreen() {
     }
   };
 
+  const handleGoToSignIn = () => {
+    router.replace('/(auth)/login');
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.iconContainer}>
-          <Ionicons name="mail-open" size={50} color="#d32f2f" />
+          <Ionicons 
+            name={isVerified ? "checkmark-circle" : "mail-open"} 
+            size={50} 
+            color={isVerified ? "#4caf50" : "#d32f2f"} 
+          />
         </View>
-        <Text style={styles.title}>Check Your Email</Text>
-        <Text style={styles.subtitle}>We sent a verification link to</Text>
-        <Text style={styles.email}>{params.email}</Text>
+        <Text style={styles.title}>
+          {isVerified ? "Email Verified!" : "Check Your Email"}
+        </Text>
+        {!isVerified && (
+          <>
+            <Text style={styles.subtitle}>We sent a verification link to</Text>
+            <Text style={styles.email}>{params.email}</Text>
+          </>
+        )}
+        {isVerified && (
+          <Text style={styles.verifiedSubtitle}>
+            Your email has been verified. You can now sign in to your account.
+          </Text>
+        )}
       </View>
 
-      <View style={styles.instructionsContainer}>
-        <View style={styles.instructionItem}>
-          <View style={styles.instructionNumber}>
-            <Text style={styles.instructionNumberText}>1</Text>
+      {!isVerified && (
+        <View style={styles.instructionsContainer}>
+          <View style={styles.instructionItem}>
+            <View style={styles.instructionNumber}>
+              <Text style={styles.instructionNumberText}>1</Text>
+            </View>
+            <Text style={styles.instructionText}>Open your email inbox</Text>
           </View>
-          <Text style={styles.instructionText}>Open your email inbox</Text>
-        </View>
-        <View style={styles.instructionItem}>
-          <View style={styles.instructionNumber}>
-            <Text style={styles.instructionNumberText}>2</Text>
+          <View style={styles.instructionItem}>
+            <View style={styles.instructionNumber}>
+              <Text style={styles.instructionNumberText}>2</Text>
+            </View>
+            <Text style={styles.instructionText}>Find the email from Red Thread</Text>
           </View>
-          <Text style={styles.instructionText}>Find the email from Red Thread</Text>
-        </View>
-        <View style={styles.instructionItem}>
-          <View style={styles.instructionNumber}>
-            <Text style={styles.instructionNumberText}>3</Text>
+          <View style={styles.instructionItem}>
+            <View style={styles.instructionNumber}>
+              <Text style={styles.instructionNumberText}>3</Text>
+            </View>
+            <Text style={styles.instructionText}>Click the verification link</Text>
           </View>
-          <Text style={styles.instructionText}>Click the verification link</Text>
         </View>
-      </View>
+      )}
 
       {isLoading && (
         <View style={styles.loadingContainer}>
@@ -186,7 +200,17 @@ export default function VerifyEmailScreen() {
         </View>
       )}
 
-      {verificationLink && (
+      {isVerified && (
+        <TouchableOpacity
+          style={styles.signInButton}
+          onPress={handleGoToSignIn}
+        >
+          <Ionicons name="log-in-outline" size={20} color="#fff" />
+          <Text style={styles.signInButtonText}>Go to Sign In</Text>
+        </TouchableOpacity>
+      )}
+
+      {verificationLink && !isVerified && (
         <TouchableOpacity
           style={styles.openLinkButton}
           onPress={handleOpenLink}
@@ -196,18 +220,20 @@ export default function VerifyEmailScreen() {
         </TouchableOpacity>
       )}
 
-      <View style={styles.resendContainer}>
-        <Text style={styles.resendText}>Didn't receive the email?</Text>
-        <TouchableOpacity onPress={handleResend} disabled={isResending}>
-          {isResending ? (
-            <ActivityIndicator size="small" color="#d32f2f" />
-          ) : (
-            <Text style={styles.resendLink}>Resend Link</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+      {!isVerified && (
+        <View style={styles.resendContainer}>
+          <Text style={styles.resendText}>Didn't receive the email?</Text>
+          <TouchableOpacity onPress={handleResend} disabled={isResending}>
+            {isResending ? (
+              <ActivityIndicator size="small" color="#d32f2f" />
+            ) : (
+              <Text style={styles.resendLink}>Resend Link</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {params.isOrganization === 'true' && (
+      {params.isOrganization === 'true' && !isVerified && (
         <View style={styles.noteContainer}>
           <Ionicons name="information-circle" size={20} color="#ff9800" />
           <Text style={styles.note}>
@@ -216,13 +242,15 @@ export default function VerifyEmailScreen() {
         </View>
       )}
 
-      <TouchableOpacity
-        style={styles.backButton}
-        onPress={() => router.back()}
-      >
-        <Ionicons name="arrow-back" size={20} color="#888" />
-        <Text style={styles.backButtonText}>Back to Sign Up</Text>
-      </TouchableOpacity>
+      {!isVerified && (
+        <TouchableOpacity
+          style={styles.backButton}
+          onPress={() => router.back()}
+        >
+          <Ionicons name="arrow-back" size={20} color="#888" />
+          <Text style={styles.backButtonText}>Back to Sign Up</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -256,6 +284,13 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: '#888',
+  },
+  verifiedSubtitle: {
+    fontSize: 16,
+    color: '#888',
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    marginTop: 8,
   },
   email: {
     fontSize: 16,
@@ -300,6 +335,21 @@ const styles = StyleSheet.create({
     color: '#888',
     fontSize: 14,
     marginTop: 12,
+  },
+  signInButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#4caf50',
+    paddingVertical: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+    gap: 8,
+  },
+  signInButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
   },
   openLinkButton: {
     flexDirection: 'row',
