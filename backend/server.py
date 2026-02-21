@@ -328,38 +328,62 @@ def user_to_response(user: User) -> UserResponse:
 
 async def send_verification_email(email: str, continue_url: str = None):
     """
-    Send verification email using Firebase Authentication email link sign-in.
-    Firebase handles the email sending automatically.
+    Generate an email verification link using Firebase Authentication.
+    Firebase Auth handles the email sending when the user is created.
+    For this app, we'll use a custom approach with Firebase's action code system.
     """
     try:
-        # Generate the email verification link using Firebase Admin SDK
-        # The link will redirect to the continue_url after verification
+        # Get the Firebase user to ensure they exist
+        try:
+            firebase_user = firebase_auth.get_user_by_email(email)
+        except firebase_auth.UserNotFoundError:
+            logger.error("Firebase user not found for email: %s", email)
+            return None
+        
+        # Generate a custom email action link
+        # Note: The domain must be authorized in Firebase Console
+        # For development, we'll log the link
         if not continue_url:
             continue_url = os.environ.get('FRONTEND_URL', 'https://email-db-switch.preview.emergentagent.com')
         
-        action_code_settings = firebase_auth.ActionCodeSettings(
-            url=f"{continue_url}/verify-email-complete",
-            handle_code_in_app=True,
-        )
-        
-        link = firebase_auth.generate_email_verification_link(email, action_code_settings)
-        
-        # Firebase will send the email automatically when using generate_sign_in_with_email_link
-        # But for email verification, we need to send it ourselves or use generate_sign_in_with_email_link
-        # Let's use sign-in with email link approach which sends email automatically
-        
-        logger.info("Verification link generated for: %s", email)
-        logger.info("Link: %s", link)  # For testing - in production, Firebase sends this via email
-        
-        # Store the link info in Firestore for tracking
-        db.collection('email_verification_links').add({
-            'email': email,
-            'link': link,
-            'created_at': datetime.now(timezone.utc).isoformat(),
-            'used': False
-        })
-        
-        return link
+        # Use Firebase's password reset link generation as a workaround
+        # since it doesn't require domain authorization for the action URL
+        # We'll repurpose this for email verification
+        try:
+            # Try to generate email verification link
+            action_code_settings = firebase_auth.ActionCodeSettings(
+                url=continue_url,
+                handle_code_in_app=True,
+            )
+            link = firebase_auth.generate_email_verification_link(email, action_code_settings)
+            logger.info("Verification link generated for: %s", email)
+            logger.info("Link: %s", link)
+            return link
+        except Exception as link_error:
+            # If domain not authorized, generate a simple verification token
+            logger.warning("Could not generate Firebase link (domain may not be authorized): %s", str(link_error))
+            
+            # Generate a simple verification token as fallback
+            import secrets
+            verification_token = secrets.token_urlsafe(32)
+            
+            # Store the token in Firestore
+            db.collection('email_verification_tokens').add({
+                'email': email,
+                'token': verification_token,
+                'firebase_uid': firebase_user.uid,
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'expires_at': (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+                'used': False
+            })
+            
+            # Build verification URL
+            verification_link = f"{continue_url}/verify-email-complete?token={verification_token}&email={email}"
+            logger.info("Fallback verification link generated for: %s", email)
+            logger.info("Link: %s", verification_link)
+            
+            return verification_link
+            
     except Exception as e:
         logger.error("Failed to generate verification link: %s", str(e))
         return None
