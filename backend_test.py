@@ -7,7 +7,7 @@ import time
 import sys
 
 # Configuration
-BASE_URL = "https://community-action.preview.emergentagent.com/api"
+BASE_URL = "https://email-db-switch.preview.emergentagent.com/api"
 ADMIN_EMAIL = "theredthreadapp@gmail.com"
 ADMIN_PASSWORD = "1234"
 
