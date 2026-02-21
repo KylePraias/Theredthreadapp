@@ -212,7 +212,7 @@ def test_organization_registration(result):
         test_email = f"testorg_{int(time.time())}@example.com"
         register_data = {
             "email": test_email,
-            "password": "testpassword123",
+            "password": "testpassword123!",  # Updated to include special character
             "name": "Test Organization",
             "description": "A test organization for mutual aid",
             "contact_email": test_email,
