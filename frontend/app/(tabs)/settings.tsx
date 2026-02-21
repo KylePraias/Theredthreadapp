@@ -31,7 +31,10 @@ export default function SettingsScreen() {
         style: 'destructive',
         onPress: async () => {
           await logout();
-          router.replace('/');
+          // Small delay to ensure state is cleared before navigation
+          setTimeout(() => {
+            router.replace('/');
+          }, 100);
         },
       },
     ]);
