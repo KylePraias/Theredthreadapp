@@ -521,58 +521,125 @@ async def register_organization(data: OrganizationRegister):
 
 @api_router.post("/auth/verify-email", response_model=TokenResponse)
 async def verify_email(data: VerifyEmailRequest):
-    """Verify email using Firebase oob_code from verification link"""
-    import requests
+    """Verify email using Firebase oob_code or custom token from verification link"""
     
-    try:
-        # Use Firebase REST API to apply the action code (verify email)
-        # This validates the oobCode and marks the email as verified in Firebase Auth
-        verify_url = f"https://identitytoolkit.googleapis.com/v1/accounts:update?key={FIREBASE_API_KEY}"
-        
-        response = requests.post(verify_url, json={
-            "oobCode": data.oob_code
-        })
-        
-        if response.status_code != 200:
-            error_data = response.json()
-            error_message = error_data.get('error', {}).get('message', 'Verification failed')
-            logger.error("Firebase verification failed: %s", error_message)
-            raise HTTPException(status_code=400, detail=f"Verification failed: {error_message}")
-        
-        # Find user in Firestore and mark as verified
-        users_ref = db.collection('users')
-        user_query = users_ref.where('email', '==', data.email).limit(1)
-        user_docs = list(user_query.stream())
-        
-        if not user_docs:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        user_doc = user_docs[0]
-        db.collection('users').document(user_doc.id).update({'is_verified': True})
-        
-        # Get updated user
-        user_dict = deserialize_from_firestore(db.collection('users').document(user_doc.id).get().to_dict())
-        user = User(**user_dict)
-        
-        # If organization, notify admin
-        if user.user_type == "organization" and user.organization_profile:
-            await send_admin_notification(
-                user.organization_profile.name,
-                user.email
+    # Try custom token verification first (our fallback approach)
+    if data.token:
+        try:
+            # Find the verification token
+            tokens_ref = db.collection('email_verification_tokens')
+            query = tokens_ref.where('email', '==', data.email).where('token', '==', data.token).where('used', '==', False).limit(1)
+            token_docs = list(query.stream())
+            
+            if not token_docs:
+                raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+            
+            token_data = deserialize_from_firestore(token_docs[0].to_dict())
+            
+            # Check if expired
+            expires_at = token_data.get('expires_at')
+            if expires_at:
+                if isinstance(expires_at, str):
+                    expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                if datetime.now(timezone.utc) > expires_at:
+                    raise HTTPException(status_code=400, detail="Verification link has expired")
+            
+            # Mark token as used
+            token_docs[0].reference.update({'used': True})
+            
+            # Mark user as verified in Firebase Auth
+            try:
+                firebase_auth.update_user(token_data['firebase_uid'], email_verified=True)
+            except Exception as e:
+                logger.warning("Could not update Firebase Auth email_verified: %s", str(e))
+            
+            # Find and update user in Firestore as verified
+            users_ref = db.collection('users')
+            user_query = users_ref.where('email', '==', data.email).limit(1)
+            user_docs = list(user_query.stream())
+            
+            if not user_docs:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            user_doc = user_docs[0]
+            db.collection('users').document(user_doc.id).update({'is_verified': True})
+            
+            # Get updated user
+            user_dict = deserialize_from_firestore(db.collection('users').document(user_doc.id).get().to_dict())
+            user = User(**user_dict)
+            
+            # If organization, notify admin
+            if user.user_type == "organization" and user.organization_profile:
+                await send_admin_notification(
+                    user.organization_profile.name,
+                    user.email
+                )
+            
+            # Create token
+            token = create_access_token({"sub": user.id})
+            
+            return TokenResponse(
+                access_token=token,
+                user=user_to_response(user)
             )
-        
-        # Create token
-        token = create_access_token({"sub": user.id})
-        
-        return TokenResponse(
-            access_token=token,
-            user=user_to_response(user)
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Email verification error: %s", str(e))
-        raise HTTPException(status_code=400, detail="Verification failed. Please try again.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Token verification error: %s", str(e))
+            raise HTTPException(status_code=400, detail="Verification failed. Please try again.")
+    
+    # Try Firebase oobCode verification
+    if data.oob_code:
+        try:
+            # Use Firebase REST API to apply the action code (verify email)
+            verify_url = f"https://identitytoolkit.googleapis.com/v1/accounts:update?key={FIREBASE_API_KEY}"
+            
+            response = requests.post(verify_url, json={
+                "oobCode": data.oob_code
+            })
+            
+            if response.status_code != 200:
+                error_data = response.json()
+                error_message = error_data.get('error', {}).get('message', 'Verification failed')
+                logger.error("Firebase verification failed: %s", error_message)
+                raise HTTPException(status_code=400, detail=f"Verification failed: {error_message}")
+            
+            # Find user in Firestore and mark as verified
+            users_ref = db.collection('users')
+            user_query = users_ref.where('email', '==', data.email).limit(1)
+            user_docs = list(user_query.stream())
+            
+            if not user_docs:
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            user_doc = user_docs[0]
+            db.collection('users').document(user_doc.id).update({'is_verified': True})
+            
+            # Get updated user
+            user_dict = deserialize_from_firestore(db.collection('users').document(user_doc.id).get().to_dict())
+            user = User(**user_dict)
+            
+            # If organization, notify admin
+            if user.user_type == "organization" and user.organization_profile:
+                await send_admin_notification(
+                    user.organization_profile.name,
+                    user.email
+                )
+            
+            # Create token
+            token = create_access_token({"sub": user.id})
+            
+            return TokenResponse(
+                access_token=token,
+                user=user_to_response(user)
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Firebase oobCode verification error: %s", str(e))
+            raise HTTPException(status_code=400, detail="Verification failed. Please try again.")
+    
+    raise HTTPException(status_code=400, detail="Verification token or code is required")
 
 @api_router.post("/auth/resend-verification", response_model=RegistrationResponse)
 async def resend_verification(data: ResendVerificationRequest):
