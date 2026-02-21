@@ -442,7 +442,7 @@ async def register_individual(data: IndividualRegister):
         verification_link=verification_link  # Include for development/testing
     )
 
-@api_router.post("/auth/register/organization", response_model=MessageResponse)
+@api_router.post("/auth/register/organization", response_model=RegistrationResponse)
 async def register_organization(data: OrganizationRegister):
     """Register a new organization"""
     # Check if email exists
@@ -452,23 +452,24 @@ async def register_organization(data: OrganizationRegister):
     if existing_docs:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    # Create verification code
-    code = generate_verification_code()
-    verification = VerificationCode(
-        email=data.email,
-        code=code,
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
-    )
-    db.collection('verification_codes').document(verification.id).set(
-        serialize_for_firestore(verification.model_dump())
-    )
+    # Create user in Firebase Auth (for email link verification)
+    try:
+        firebase_user = firebase_auth.create_user(email=data.email, password=data.password)
+        firebase_uid = firebase_user.uid
+    except firebase_auth.EmailAlreadyExistsError:
+        firebase_user = firebase_auth.get_user_by_email(data.email)
+        firebase_uid = firebase_user.uid
+    except Exception as e:
+        logger.error("Failed to create Firebase Auth user: %s", str(e))
+        raise HTTPException(status_code=500, detail="Failed to create user account")
     
-    # Create organization user (unverified, pending approval)
+    # Create organization user in Firestore (unverified, pending approval)
     user = User(
         email=data.email,
         password_hash=hash_password(data.password),
         user_type="organization",
         auth_provider="email",
+        firebase_uid=firebase_uid,
         is_verified=False,
         approval_status="pending",
         organization_profile=OrganizationProfile(
@@ -484,10 +485,13 @@ async def register_organization(data: OrganizationRegister):
         serialize_for_firestore(user.model_dump())
     )
     
-    # Send verification email
-    await send_verification_email(data.email, code)
+    # Generate and send verification link
+    verification_link = await send_verification_email(data.email)
     
-    return MessageResponse(message="Verification code sent to your email")
+    return RegistrationResponse(
+        message="Verification link sent to your email. Please check your inbox and click the link to verify.",
+        verification_link=verification_link
+    )
 
 @api_router.post("/auth/verify-email", response_model=TokenResponse)
 async def verify_email(data: VerifyEmailRequest):
