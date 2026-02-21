@@ -489,6 +489,11 @@ async def register_individual(data: IndividualRegister):
 @api_router.post("/auth/register/organization", response_model=RegistrationResponse)
 async def register_organization(data: OrganizationRegister):
     """Register a new organization"""
+    # Validate password
+    is_valid, error_message = validate_password(data.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_message)
+    
     # Check if email exists
     users_ref = db.collection('users')
     existing_query = users_ref.where('email', '==', data.email).limit(1)
