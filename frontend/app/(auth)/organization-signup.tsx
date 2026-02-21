@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { authApi } from '../../src/api/auth';
 import { storage } from '../../src/utils/storage';
 
+// Password validation helper
+const validatePassword = (password: string) => {
+  const hasMinLength = password.length >= 8;
+  const hasNumber = /\d/.test(password);
+  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+  return {
+    isValid: hasMinLength && hasNumber && hasSpecialChar,
+    hasMinLength,
+    hasNumber,
+    hasSpecialChar,
+  };
+};
+
 export default function OrganizationSignupScreen() {
   const router = useRouter();
   const [name, setName] = useState('');
@@ -29,6 +42,8 @@ export default function OrganizationSignupScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  const passwordValidation = useMemo(() => validatePassword(password), [password]);
+
   const handleSignup = async () => {
     if (!name || !email || !contactEmail || !password || !description) {
       Alert.alert('Error', 'Please fill in all required fields');
@@ -40,8 +55,8 @@ export default function OrganizationSignupScreen() {
       return;
     }
 
-    if (password.length < 4) {
-      Alert.alert('Error', 'Password must be at least 4 characters');
+    if (!passwordValidation.isValid) {
+      Alert.alert('Error', 'Password does not meet requirements');
       return;
     }
 
