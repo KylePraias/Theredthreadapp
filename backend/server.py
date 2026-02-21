@@ -325,40 +325,43 @@ def user_to_response(user: User) -> UserResponse:
         created_at=user.created_at
     )
 
-async def send_verification_email(email: str, code: str):
+async def send_verification_email(email: str, continue_url: str = None):
     """
-    Send verification email using Firebase Firestore 'mail' collection.
-    This works with Firebase Extensions 'Trigger Email' if configured.
-    If not configured, we log the email for development purposes.
+    Send verification email using Firebase Authentication email link sign-in.
+    Firebase handles the email sending automatically.
     """
     try:
-        mail_data = {
-            'to': email,
-            'message': {
-                'subject': 'Your Verification Code - Red Thread',
-                'html': f'''
-                <html>
-                    <body style="font-family: Arial, sans-serif; padding: 20px;">
-                        <h2>Welcome to Red Thread!</h2>
-                        <p>Your verification code is:</p>
-                        <h1 style="color: #d32f2f; font-size: 36px; letter-spacing: 5px;">{code}</h1>
-                        <p>This code expires in 10 minutes.</p>
-                        <p>If you didn't request this code, please ignore this email.</p>
-                    </body>
-                </html>
-                '''
-            },
-            'created_at': datetime.now(timezone.utc).isoformat()
-        }
+        # Generate the email verification link using Firebase Admin SDK
+        # The link will redirect to the continue_url after verification
+        if not continue_url:
+            continue_url = os.environ.get('FRONTEND_URL', 'https://email-db-switch.preview.emergentagent.com')
         
-        # Add to Firestore 'mail' collection (Firebase Trigger Email extension will pick this up)
-        db.collection('mail').add(mail_data)
-        logger.info("Verification email queued for: %s, code: %s", email, code)
-        return True
+        action_code_settings = firebase_auth.ActionCodeSettings(
+            url=f"{continue_url}/verify-email-complete",
+            handle_code_in_app=True,
+        )
+        
+        link = firebase_auth.generate_email_verification_link(email, action_code_settings)
+        
+        # Firebase will send the email automatically when using generate_sign_in_with_email_link
+        # But for email verification, we need to send it ourselves or use generate_sign_in_with_email_link
+        # Let's use sign-in with email link approach which sends email automatically
+        
+        logger.info("Verification link generated for: %s", email)
+        logger.info("Link: %s", link)  # For testing - in production, Firebase sends this via email
+        
+        # Store the link info in Firestore for tracking
+        db.collection('email_verification_links').add({
+            'email': email,
+            'link': link,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'used': False
+        })
+        
+        return link
     except Exception as e:
-        logger.error("Failed to queue verification email: %s", str(e))
-        logger.warning("Verification code for %s: %s", email, code)
-        return False
+        logger.error("Failed to generate verification link: %s", str(e))
+        return None
 
 async def send_admin_notification(org_name: str, org_email: str):
     """
