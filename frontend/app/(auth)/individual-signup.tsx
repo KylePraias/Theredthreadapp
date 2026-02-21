@@ -164,7 +164,7 @@ export default function IndividualSignupScreen() {
         </View>
 
         <Text style={styles.note}>
-          A verification code will be sent to your email
+          A verification link will be sent to your email
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
