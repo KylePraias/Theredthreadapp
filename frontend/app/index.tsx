@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../src/store/authStore';
@@ -8,11 +8,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 export default function WelcomeScreen() {
   const router = useRouter();
   const { user, isInitialized } = useAuthStore();
+  const hasRedirected = useRef(false);
 
   useEffect(() => {
-    // Only auto-redirect if user is logged in when screen first loads
-    // Don't redirect if user just logged out (user becomes null)
-    if (isInitialized && user) {
+    // Only auto-redirect once on initial app load if user is logged in
+    // After that, don't redirect (allows logout to stay on this screen)
+    if (isInitialized && user && !hasRedirected.current) {
+      hasRedirected.current = true;
       // Route based on user type and status
       if (user.user_type === 'organization' && user.approval_status === 'pending') {
         router.replace('/(auth)/pending-approval');
@@ -22,7 +24,7 @@ export default function WelcomeScreen() {
         router.replace('/(tabs)');
       }
     }
-  }, [isInitialized]); // Only depend on isInitialized, not user - so it only runs on initial load
+  }, [user, isInitialized]);
 
   return (
     <View style={styles.container}>
