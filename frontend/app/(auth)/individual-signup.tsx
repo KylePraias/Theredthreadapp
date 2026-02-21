@@ -14,6 +14,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { authApi } from '../../src/api/auth';
+import { storage } from '../../src/utils/storage';
 
 export default function IndividualSignupScreen() {
   const router = useRouter();
@@ -49,6 +50,9 @@ export default function IndividualSignupScreen() {
         display_name: displayName,
         bio: bio || undefined,
       });
+      
+      // Save email for verification completion
+      await storage.setItem('pending_verification_email', email);
       
       router.push({
         pathname: '/(auth)/verify-email',
