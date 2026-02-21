@@ -365,37 +365,26 @@ async def send_verification_email(email: str, continue_url: str = None):
 
 async def send_admin_notification(org_name: str, org_email: str):
     """
-    Notify admin about new organization signup using Firebase Firestore 'mail' collection.
+    Notify admin about new organization signup.
+    Stores notification in Firestore for admin to see.
     """
     admin_email = "theredthreadapp@gmail.com"
     
     try:
-        mail_data = {
+        notification_data = {
             'to': admin_email,
-            'message': {
-                'subject': f'New Organization Pending Approval - {org_name}',
-                'html': f'''
-                <html>
-                    <body style="font-family: Arial, sans-serif; padding: 20px;">
-                        <h2>New Organization Registration</h2>
-                        <p>A new organization has registered and is awaiting approval:</p>
-                        <ul>
-                            <li><strong>Name:</strong> {org_name}</li>
-                            <li><strong>Email:</strong> {org_email}</li>
-                        </ul>
-                        <p>Please log in to the admin panel to review and approve/reject this organization.</p>
-                    </body>
-                </html>
-                '''
-            },
-            'created_at': datetime.now(timezone.utc).isoformat()
+            'type': 'organization_approval',
+            'org_name': org_name,
+            'org_email': org_email,
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'read': False
         }
         
-        db.collection('mail').add(mail_data)
-        logger.info("Admin notification queued for new org: %s", org_name)
+        db.collection('admin_notifications').add(notification_data)
+        logger.info("Admin notification created for new org: %s", org_name)
         return True
     except Exception as e:
-        logger.error("Failed to queue admin notification: %s", str(e))
+        logger.error("Failed to create admin notification: %s", str(e))
         return False
 
 # ============== AUTH ROUTES ==============
