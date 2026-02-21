@@ -145,7 +145,8 @@ class LoginRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     email: EmailStr
-    oob_code: str  # Firebase out-of-band code from the verification link
+    oob_code: Optional[str] = None  # Firebase out-of-band code from the verification link
+    token: Optional[str] = None  # Custom verification token (fallback)
 
 class ResendVerificationRequest(BaseModel):
     email: EmailStr
