@@ -57,6 +57,9 @@ export default function OrganizationSignupScreen() {
         areas_of_focus: areasOfFocus ? areasOfFocus.split(',').map(s => s.trim()) : [],
       });
       
+      // Save email for verification completion
+      await storage.setItem('pending_verification_email', email);
+      
       router.push({
         pathname: '/(auth)/verify-email',
         params: { email, isOrganization: 'true' },
