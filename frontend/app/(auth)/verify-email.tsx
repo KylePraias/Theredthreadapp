@@ -56,7 +56,7 @@ export default function VerifyEmailScreen() {
     };
   }, [params.email]);
 
-  const handleVerifyWithCode = async (oobCode: string) => {
+  const handleVerifyWithCode = async (oobCode: string, isToken: boolean = false) => {
     if (!params.email) {
       Alert.alert('Error', 'Email address is required');
       return;
@@ -64,7 +64,7 @@ export default function VerifyEmailScreen() {
 
     setIsLoading(true);
     try {
-      const response = await authApi.verifyEmail(params.email, oobCode);
+      const response = await authApi.verifyEmail(params.email, oobCode, !isToken);
       await login(response.access_token, response.user);
       
       // Route based on user type
