@@ -198,7 +198,7 @@ def test_individual_registration(result):
     return False
 
 def test_organization_registration(result):
-    """Test organization registration flow"""
+    """Test organization registration flow with verification links"""
     try:
         # Step 1: Register organization
         test_email = f"testorg_{int(time.time())}@example.com"
@@ -217,7 +217,21 @@ def test_organization_registration(result):
         if response.status_code == 200:
             response_data = response.json()
             if "message" in response_data and "verification" in response_data["message"].lower():
-                result.log_success("Organization Registration - Org created")
+                result.log_success("Organization Registration - Org created with verification message")
+                
+                # Check if verification_link is returned (for development)
+                if "verification_link" in response_data:
+                    verification_link = response_data["verification_link"]
+                    result.log_success("Organization Registration - Verification link generated")
+                    
+                    # Verify the link contains required parameters
+                    if "token=" in verification_link and "email=" in verification_link:
+                        result.log_success("Organization Registration - Verification link has required parameters")
+                    else:
+                        result.log_failure("Organization Registration", "Verification link missing required parameters")
+                else:
+                    result.log_success("Organization Registration - No verification_link in response (production mode)")
+                
                 return True
             else:
                 result.log_failure("Organization Registration", "Unexpected response message")
