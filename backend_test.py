@@ -421,6 +421,132 @@ def test_user_profile_access(result):
     except Exception as e:
         result.log_failure("User Profile Access", str(e))
 
+def test_password_validation(result):
+    """Test password validation requirements"""
+    try:
+        # Test 1: Password too short (less than 8 characters)
+        test_email = f"pwtest1_{int(time.time())}@example.com"
+        weak_password_data = {
+            "email": test_email,
+            "password": "short1!",  # 7 chars, has number and special char
+            "display_name": "Test User"
+        }
+        
+        response = make_request("POST", "/auth/register/individual", weak_password_data)
+        if response.status_code == 400:
+            error_detail = response.json().get("detail", "")
+            if "8 characters" in error_detail:
+                result.log_success("Password Validation - Minimum length requirement")
+            else:
+                result.log_failure("Password Validation - Length", f"Unexpected error: {error_detail}")
+        else:
+            result.log_failure("Password Validation - Length", f"Expected 400, got {response.status_code}")
+        
+        # Test 2: Password without number
+        test_email = f"pwtest2_{int(time.time())}@example.com"
+        no_number_data = {
+            "email": test_email,
+            "password": "password!",  # 9 chars, has special char, no number
+            "display_name": "Test User"
+        }
+        
+        response = make_request("POST", "/auth/register/individual", no_number_data)
+        if response.status_code == 400:
+            error_detail = response.json().get("detail", "")
+            if "number" in error_detail:
+                result.log_success("Password Validation - Number requirement")
+            else:
+                result.log_failure("Password Validation - Number", f"Unexpected error: {error_detail}")
+        else:
+            result.log_failure("Password Validation - Number", f"Expected 400, got {response.status_code}")
+        
+        # Test 3: Password without special character
+        test_email = f"pwtest3_{int(time.time())}@example.com"
+        no_special_data = {
+            "email": test_email,
+            "password": "password123",  # 11 chars, has number, no special char
+            "display_name": "Test User"
+        }
+        
+        response = make_request("POST", "/auth/register/individual", no_special_data)
+        if response.status_code == 400:
+            error_detail = response.json().get("detail", "")
+            if "special character" in error_detail:
+                result.log_success("Password Validation - Special character requirement")
+            else:
+                result.log_failure("Password Validation - Special", f"Unexpected error: {error_detail}")
+        else:
+            result.log_failure("Password Validation - Special", f"Expected 400, got {response.status_code}")
+        
+        # Test 4: Valid password (should succeed)
+        test_email = f"pwtest4_{int(time.time())}@example.com"
+        valid_password_data = {
+            "email": test_email,
+            "password": "ValidPass123!",  # 12 chars, has number and special char
+            "display_name": "Test User"
+        }
+        
+        response = make_request("POST", "/auth/register/individual", valid_password_data)
+        if response.status_code == 200:
+            response_data = response.json()
+            if "message" in response_data and "verification" in response_data["message"].lower():
+                result.log_success("Password Validation - Valid password accepted")
+            else:
+                result.log_failure("Password Validation - Valid", "Unexpected response format")
+        else:
+            error_detail = response.json().get("detail", f"Status {response.status_code}")
+            result.log_failure("Password Validation - Valid password", error_detail)
+        
+        # Test 5: Organization password validation
+        test_email = f"orgpwtest_{int(time.time())}@example.com"
+        org_weak_password_data = {
+            "email": test_email,
+            "password": "weak",  # Too short
+            "name": "Test Org",
+            "description": "Test organization",
+            "contact_email": test_email
+        }
+        
+        response = make_request("POST", "/auth/register/organization", org_weak_password_data)
+        if response.status_code == 400:
+            error_detail = response.json().get("detail", "")
+            if "8 characters" in error_detail or "number" in error_detail or "special character" in error_detail:
+                result.log_success("Password Validation - Organization registration validation")
+            else:
+                result.log_failure("Password Validation - Org", f"Unexpected error: {error_detail}")
+        else:
+            result.log_failure("Password Validation - Org", f"Expected 400, got {response.status_code}")
+            
+    except Exception as e:
+        result.log_failure("Password Validation Tests", str(e))
+
+def test_admin_login_grandfathered(result):
+    """Test that admin login works with grandfathered password that doesn't meet new requirements"""
+    try:
+        # Admin password "1234" doesn't meet new requirements but should still work
+        admin_data = {
+            "email": ADMIN_EMAIL,
+            "password": ADMIN_PASSWORD  # "1234" - doesn't meet new requirements
+        }
+        
+        response = make_request("POST", "/auth/login", admin_data)
+        if response.status_code == 200:
+            response_data = response.json()
+            if "access_token" in response_data and "user" in response_data:
+                user = response_data["user"]
+                if user["user_type"] == "admin":
+                    result.log_success("Admin Login - Grandfathered password works")
+                else:
+                    result.log_failure("Admin Login - Grandfathered", "User type not admin")
+            else:
+                result.log_failure("Admin Login - Grandfathered", "Missing token or user data")
+        else:
+            error_detail = response.json().get("detail", f"Status {response.status_code}")
+            result.log_failure("Admin Login - Grandfathered password", error_detail)
+            
+    except Exception as e:
+        result.log_failure("Admin Login Grandfathered", str(e))
+
 def test_password_change(result):
     """Test password change functionality"""
 def test_resend_verification(result):
