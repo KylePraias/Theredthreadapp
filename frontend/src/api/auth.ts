@@ -53,8 +53,8 @@ export const authApi = {
     return response.data;
   },
 
-  verifyEmail: async (email: string, code: string) => {
-    const response = await apiClient.post('/auth/verify-email', { email, code });
+  verifyEmail: async (email: string, oobCode: string) => {
+    const response = await apiClient.post('/auth/verify-email', { email, oob_code: oobCode });
     return response.data;
   },
 
