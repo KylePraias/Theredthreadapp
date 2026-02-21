@@ -16,13 +16,15 @@ import string
 
 # Firebase imports
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, auth as firebase_auth
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # Firebase initialization
 firebase_cred_path = ROOT_DIR / 'firebase-admin.json'
+FIREBASE_API_KEY = os.environ.get('FIREBASE_API_KEY', 'AIzaSyCzFY8f6MPTH1dFKF29GJqGV5Ho6M1Oy6k')
+
 if not firebase_admin._apps:
     cred = credentials.Certificate(str(firebase_cred_path))
     firebase_admin.initialize_app(cred)
