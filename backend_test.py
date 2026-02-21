@@ -556,7 +556,7 @@ def test_resend_verification(result):
         test_email = f"resendtest_{int(time.time())}@example.com"
         register_data = {
             "email": test_email,
-            "password": "testpassword123",
+            "password": "testpassword123!",  # Updated to include special character
             "display_name": "Resend Test User"
         }
         
