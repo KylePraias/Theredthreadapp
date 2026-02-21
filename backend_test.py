@@ -534,16 +534,16 @@ def test_resend_verification(result):
         result.log_failure("Resend Verification", str(e))
 
 def run_all_tests():
-    """Run comprehensive backend API tests"""
-    print("Starting Mutual Aid App Backend API Tests")
+    """Run comprehensive backend API tests for email verification link system"""
+    print("Starting Mutual Aid App Backend API Tests - Email Verification Links")
     print(f"Testing against: {BASE_URL}")
     print("="*50)
     
     result = TestResult()
     
-    # Test basic connectivity
-    print("\n🔍 Testing Basic Connectivity...")
-    test_health_check(result)
+    # Test basic connectivity and database
+    print("\n🔍 Testing Basic Connectivity & Database...")
+    test_health_check_database(result)
     
     # Test authentication flows
     print("\n🔐 Testing Authentication...")
@@ -551,7 +551,13 @@ def run_all_tests():
     test_individual_registration(result)
     test_organization_registration(result)
     test_email_verification_endpoint(result)
+    test_resend_verification(result)
+    test_login_after_verification(result)
     test_google_oauth_endpoints(result)
+    
+    # Test user profile access
+    print("\n👤 Testing User Profile Access...")
+    test_user_profile_access(result)
     
     # Test admin functions (requires admin login)
     if admin_login_success:
@@ -574,7 +580,8 @@ def run_all_tests():
     # Additional information for debugging
     if result.errors:
         print("\n🔍 DEBUGGING INFO:")
-        print("- Email verification codes are logged to backend console (SendGrid not configured)")
+        print("- Email verification now uses links with tokens instead of codes")
+        print("- Verification links are returned in development mode for testing")
         print("- Organization approval requires email verification first")
         print("- Event creation requires approved organization account")
         print("- Some tests may show auth failures which is expected behavior")
