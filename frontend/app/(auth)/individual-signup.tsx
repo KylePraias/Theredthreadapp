@@ -306,4 +306,30 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 24,
   },
+  passwordRequirements: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  requirementsTitle: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  requirementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  requirementText: {
+    color: '#888',
+    fontSize: 14,
+  },
+  requirementMet: {
+    color: '#4caf50',
+  },
 });
