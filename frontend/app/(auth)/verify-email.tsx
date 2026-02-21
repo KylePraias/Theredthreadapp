@@ -1,12 +1,12 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,54 +15,56 @@ import { useAuthStore } from '../../src/store/authStore';
 
 export default function VerifyEmailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ email: string; isOrganization?: string }>();
+  const params = useLocalSearchParams<{ email: string; isOrganization?: string; oobCode?: string }>();
   const { login } = useAuthStore();
-  const [code, setCode] = useState(['', '', '', '', '', '']);
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
-  const inputRefs = useRef<(TextInput | null)[]>([]);
+  const [verificationLink, setVerificationLink] = useState<string | null>(null);
 
-  const handleCodeChange = (value: string, index: number) => {
-    if (value.length > 1) {
-      // Handle paste
-      const digits = value.replace(/\D/g, '').split('').slice(0, 6);
-      const newCode = [...code];
-      digits.forEach((digit, i) => {
-        if (i < 6) newCode[i] = digit;
-      });
-      setCode(newCode);
-      if (digits.length === 6) {
-        inputRefs.current[5]?.focus();
+  // Check if we have an oobCode from the URL (user clicked verification link)
+  useEffect(() => {
+    if (params.oobCode && params.email) {
+      handleVerifyWithCode(params.oobCode);
+    }
+  }, [params.oobCode]);
+
+  // Handle deep link for email verification
+  useEffect(() => {
+    const handleDeepLink = (event: { url: string }) => {
+      const url = event.url;
+      // Parse the oobCode from the Firebase verification link
+      const oobCodeMatch = url.match(/[?&]oobCode=([^&]+)/);
+      const modeMatch = url.match(/[?&]mode=([^&]+)/);
+      
+      if (oobCodeMatch && modeMatch && modeMatch[1] === 'verifyEmail') {
+        handleVerifyWithCode(oobCodeMatch[1]);
       }
-      return;
-    }
+    };
 
-    const newCode = [...code];
-    newCode[index] = value;
-    setCode(newCode);
+    // Listen for incoming links
+    const subscription = Linking.addEventListener('url', handleDeepLink);
 
-    // Auto-focus next input
-    if (value && index < 5) {
-      inputRefs.current[index + 1]?.focus();
-    }
-  };
+    // Check if app was opened with a link
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleDeepLink({ url });
+      }
+    });
 
-  const handleKeyPress = (e: any, index: number) => {
-    if (e.nativeEvent.key === 'Backspace' && !code[index] && index > 0) {
-      inputRefs.current[index - 1]?.focus();
-    }
-  };
+    return () => {
+      subscription.remove();
+    };
+  }, [params.email]);
 
-  const handleVerify = async () => {
-    const verificationCode = code.join('');
-    if (verificationCode.length !== 6) {
-      Alert.alert('Error', 'Please enter the 6-digit code');
+  const handleVerifyWithCode = async (oobCode: string) => {
+    if (!params.email) {
+      Alert.alert('Error', 'Email address is required');
       return;
     }
 
     setIsLoading(true);
     try {
-      const response = await authApi.verifyEmail(params.email, verificationCode);
+      const response = await authApi.verifyEmail(params.email, oobCode);
       await login(response.access_token, response.user);
       
       // Route based on user type
@@ -82,15 +84,27 @@ export default function VerifyEmailScreen() {
   const handleResend = async () => {
     setIsResending(true);
     try {
-      await authApi.resendVerification(params.email);
-      Alert.alert('Success', 'A new verification code has been sent to your email');
-      setCode(['', '', '', '', '', '']);
-      inputRefs.current[0]?.focus();
+      const response = await authApi.resendVerification(params.email);
+      // In development, the verification_link is returned
+      if (response.verification_link) {
+        setVerificationLink(response.verification_link);
+      }
+      Alert.alert('Success', 'A new verification link has been sent to your email');
     } catch (error: any) {
-      const message = error.response?.data?.detail || 'Failed to resend code';
+      const message = error.response?.data?.detail || 'Failed to resend verification link';
       Alert.alert('Error', message);
     } finally {
       setIsResending(false);
+    }
+  };
+
+  const handleOpenLink = async () => {
+    if (verificationLink) {
+      try {
+        await Linking.openURL(verificationLink);
+      } catch (error) {
+        Alert.alert('Error', 'Could not open verification link');
+      }
     }
   };
 
@@ -100,46 +114,56 @@ export default function VerifyEmailScreen() {
         <View style={styles.iconContainer}>
           <Ionicons name="mail-open" size={50} color="#d32f2f" />
         </View>
-        <Text style={styles.title}>Verify Your Email</Text>
-        <Text style={styles.subtitle}>Enter the 6-digit code sent to</Text>
+        <Text style={styles.title}>Check Your Email</Text>
+        <Text style={styles.subtitle}>We sent a verification link to</Text>
         <Text style={styles.email}>{params.email}</Text>
       </View>
 
-      <View style={styles.codeContainer}>
-        {code.map((digit, index) => (
-          <TextInput
-            key={index}
-            ref={(ref) => (inputRefs.current[index] = ref)}
-            style={[styles.codeInput, digit && styles.codeInputFilled]}
-            value={digit}
-            onChangeText={(value) => handleCodeChange(value, index)}
-            onKeyPress={(e) => handleKeyPress(e, index)}
-            keyboardType="number-pad"
-            maxLength={6}
-            selectTextOnFocus
-          />
-        ))}
+      <View style={styles.instructionsContainer}>
+        <View style={styles.instructionItem}>
+          <View style={styles.instructionNumber}>
+            <Text style={styles.instructionNumberText}>1</Text>
+          </View>
+          <Text style={styles.instructionText}>Open your email inbox</Text>
+        </View>
+        <View style={styles.instructionItem}>
+          <View style={styles.instructionNumber}>
+            <Text style={styles.instructionNumberText}>2</Text>
+          </View>
+          <Text style={styles.instructionText}>Find the email from Red Thread</Text>
+        </View>
+        <View style={styles.instructionItem}>
+          <View style={styles.instructionNumber}>
+            <Text style={styles.instructionNumberText}>3</Text>
+          </View>
+          <Text style={styles.instructionText}>Click the verification link</Text>
+        </View>
       </View>
 
-      <TouchableOpacity
-        style={styles.verifyButton}
-        onPress={handleVerify}
-        disabled={isLoading}
-      >
-        {isLoading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.verifyButtonText}>Verify</Text>
-        )}
-      </TouchableOpacity>
+      {isLoading && (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#d32f2f" />
+          <Text style={styles.loadingText}>Verifying your email...</Text>
+        </View>
+      )}
+
+      {verificationLink && (
+        <TouchableOpacity
+          style={styles.openLinkButton}
+          onPress={handleOpenLink}
+        >
+          <Ionicons name="open-outline" size={20} color="#fff" />
+          <Text style={styles.openLinkButtonText}>Open Verification Link (Dev)</Text>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.resendContainer}>
-        <Text style={styles.resendText}>Didn't receive the code?</Text>
+        <Text style={styles.resendText}>Didn't receive the email?</Text>
         <TouchableOpacity onPress={handleResend} disabled={isResending}>
           {isResending ? (
             <ActivityIndicator size="small" color="#d32f2f" />
           ) : (
-            <Text style={styles.resendLink}>Resend</Text>
+            <Text style={styles.resendLink}>Resend Link</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -152,6 +176,14 @@ export default function VerifyEmailScreen() {
           </Text>
         </View>
       )}
+
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() => router.back()}
+      >
+        <Ionicons name="arrow-back" size={20} color="#888" />
+        <Text style={styles.backButtonText}>Back to Sign Up</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -165,7 +197,7 @@ const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
     marginTop: 20,
-    marginBottom: 40,
+    marginBottom: 32,
   },
   iconContainer: {
     width: 100,
@@ -192,43 +224,64 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginTop: 4,
   },
-  codeContainer: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 12,
-    marginBottom: 32,
-  },
-  codeInput: {
-    width: 48,
-    height: 56,
-    borderRadius: 12,
+  instructionsContainer: {
     backgroundColor: '#1a1a1a',
-    borderWidth: 2,
-    borderColor: '#333',
-    color: '#fff',
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 24,
   },
-  codeInputFilled: {
-    borderColor: '#d32f2f',
-  },
-  verifyButton: {
-    backgroundColor: '#d32f2f',
-    paddingVertical: 16,
-    borderRadius: 12,
+  instructionItem: {
+    flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 16,
   },
-  verifyButtonText: {
+  instructionNumber: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#d32f2f',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  instructionNumberText: {
     color: '#fff',
-    fontSize: 18,
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  instructionText: {
+    color: '#fff',
+    fontSize: 15,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  loadingText: {
+    color: '#888',
+    fontSize: 14,
+    marginTop: 12,
+  },
+  openLinkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2196f3',
+    paddingVertical: 14,
+    borderRadius: 12,
+    marginBottom: 16,
+    gap: 8,
+  },
+  openLinkButtonText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: '600',
   },
   resendContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: 8,
     gap: 8,
   },
   resendText: {
@@ -246,7 +299,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 152, 0, 0.1)',
     borderRadius: 12,
     padding: 16,
-    marginTop: 32,
+    marginTop: 24,
     gap: 12,
   },
   note: {
@@ -254,5 +307,17 @@ const styles = StyleSheet.create({
     color: '#ff9800',
     fontSize: 14,
     lineHeight: 20,
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 'auto',
+    paddingTop: 24,
+    gap: 8,
+  },
+  backButtonText: {
+    color: '#888',
+    fontSize: 16,
   },
 });
