@@ -386,23 +386,32 @@ def test_rsvp_api(result):
     except Exception as e:
         result.log_failure("RSVP API", str(e))
 
-def test_password_change(result):
-    """Test password change functionality"""
+def test_user_profile_access(result):
+    """Test authenticated user profile access"""
+    global individual_token
     try:
-        # Test without auth
-        change_data = {
-            "current_password": "old123",
-            "new_password": "new123"
-        }
+        if individual_token:
+            # Test get current user profile with valid token
+            response = make_request("GET", "/users/me", auth_token=individual_token)
+            if response.status_code == 200:
+                user_data = response.json()
+                if "id" in user_data and "email" in user_data and "user_type" in user_data:
+                    result.log_success("User Profile - Get current user (authenticated)")
+                else:
+                    result.log_failure("User Profile", "Missing required fields in user response")
+            else:
+                error_msg = response.json().get("detail", f"Status {response.status_code}")
+                result.log_failure("User Profile - Authenticated access", error_msg)
         
-        response = make_request("POST", "/auth/change-password", change_data)
+        # Test without authentication
+        response = make_request("GET", "/users/me")
         if response.status_code == 403 or response.status_code == 401:
-            result.log_success("Password Change - Auth protection")
+            result.log_success("User Profile - Auth protection working")
         else:
-            result.log_failure("Password Change - Auth protection", f"Expected 401/403, got {response.status_code}")
+            result.log_failure("User Profile - Auth protection", f"Expected 401/403, got {response.status_code}")
             
     except Exception as e:
-        result.log_failure("Password Change API", str(e))
+        result.log_failure("User Profile Access", str(e))
 
 def test_google_oauth_endpoints(result):
     """Test Google OAuth endpoints"""
