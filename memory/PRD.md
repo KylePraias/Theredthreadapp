@@ -56,7 +56,7 @@
 - ✅ Firebase Auth user is also created and marked as verified
 
 ### Feb 21, 2026 - UX Fixes
-- ✅ **Sign Out**: Now redirects to login screen instead of root
+- ✅ **Sign Out**: Now redirects to welcome screen (/) with Sign In / Create Account options
 - ✅ **Create Event Tab**: Only visible to approved organizations
 - ✅ **Password Requirements**: 
   - Minimum 8 characters
@@ -65,7 +65,11 @@
   - Visual feedback during signup showing requirement status
   - Backend validation with specific error messages
 - ✅ **Admin Login**: Goes to event feed, not admin dashboard (Admin Dashboard accessible via Settings)
-- ✅ **Email Verification**: App polls to detect when email is verified and auto-redirects to login
+- ✅ **Email Verification Polling**: 
+  - New `/api/auth/check-verification` endpoint to check verification status
+  - App polls every 3 seconds to detect when email is verified
+  - "Go to Sign In" button only appears AFTER verification link is clicked
+  - Redirects to login page after verification detected
 
 ### Email Verification Flow
 1. User registers → Backend creates user in Firestore AND Firebase Auth
