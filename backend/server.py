@@ -13,6 +13,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 import random
 import string
+import requests
 
 # Firebase imports
 import firebase_admin
