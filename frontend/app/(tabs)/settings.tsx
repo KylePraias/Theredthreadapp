@@ -31,7 +31,7 @@ export default function SettingsScreen() {
         style: 'destructive',
         onPress: async () => {
           await logout();
-          router.replace('/');
+          router.replace('/(auth)/login');
         },
       },
     ]);
