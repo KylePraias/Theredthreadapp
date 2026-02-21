@@ -16,7 +16,7 @@ import { storage } from '../../src/utils/storage';
 
 export default function VerifyEmailCompleteScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ oobCode?: string; mode?: string }>();
+  const params = useLocalSearchParams<{ oobCode?: string; mode?: string; token?: string; email?: string }>();
   const { login } = useAuthStore();
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState('');
@@ -24,13 +24,27 @@ export default function VerifyEmailCompleteScreen() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Try to get saved email from storage
+    // Try to get saved email from storage or from URL params
     const initVerification = async () => {
-      const savedEmail = await storage.getItem('pending_verification_email');
-      if (savedEmail) {
-        setEmail(savedEmail);
-        if (params.oobCode && params.mode === 'verifyEmail') {
-          handleVerify(savedEmail, params.oobCode);
+      let emailToUse = params.email || '';
+      
+      if (!emailToUse) {
+        const savedEmail = await storage.getItem('pending_verification_email');
+        if (savedEmail) {
+          emailToUse = savedEmail;
+        }
+      }
+      
+      if (emailToUse) {
+        setEmail(emailToUse);
+        
+        // Check if we have a token (custom verification)
+        if (params.token) {
+          handleVerify(emailToUse, params.token, false);
+        }
+        // Check if we have oobCode (Firebase verification)
+        else if (params.oobCode && params.mode === 'verifyEmail') {
+          handleVerify(emailToUse, params.oobCode, true);
         }
       } else {
         // User opened link on different device, need to ask for email
@@ -39,13 +53,13 @@ export default function VerifyEmailCompleteScreen() {
     };
 
     initVerification();
-  }, [params.oobCode]);
+  }, [params.oobCode, params.token, params.email]);
 
-  const handleVerify = async (emailToVerify: string, oobCode: string) => {
+  const handleVerify = async (emailToVerify: string, tokenOrCode: string, isOobCode: boolean) => {
     setIsLoading(true);
     setError(null);
     try {
-      const response = await authApi.verifyEmail(emailToVerify, oobCode);
+      const response = await authApi.verifyEmail(emailToVerify, tokenOrCode, isOobCode);
       await login(response.access_token, response.user);
       
       // Clear the pending email
@@ -69,8 +83,12 @@ export default function VerifyEmailCompleteScreen() {
       Alert.alert('Error', 'Please enter your email address');
       return;
     }
-    if (params.oobCode) {
-      handleVerify(email.trim(), params.oobCode);
+    
+    // Determine which verification method to use
+    if (params.token) {
+      handleVerify(email.trim(), params.token, false);
+    } else if (params.oobCode) {
+      handleVerify(email.trim(), params.oobCode, true);
     } else {
       setError('Invalid verification link');
     }
