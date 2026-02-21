@@ -134,7 +134,7 @@ def test_individual_registration(result):
         test_email = f"testuser_{int(time.time())}@example.com"
         register_data = {
             "email": test_email,
-            "password": "testpassword123",
+            "password": "testpassword123!",  # Updated to include special character
             "display_name": "Test User",
             "bio": "Testing user registration"
         }
