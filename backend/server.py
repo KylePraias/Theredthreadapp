@@ -15,6 +15,8 @@ import random
 import string
 import requests
 
+import re
+
 # Firebase imports
 import firebase_admin
 from firebase_admin import credentials, firestore, auth as firebase_auth
@@ -40,6 +42,17 @@ JWT_EXPIRATION_HOURS = 24 * 7  # 1 week
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Password validation helper
+def validate_password(password: str) -> tuple[bool, str]:
+    """Validate password meets requirements: 8+ chars, 1 number, 1 special char"""
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least one number"
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        return False, "Password must contain at least one special character (!@#$%^&* etc.)"
+    return True, ""
 
 # Security
 security = HTTPBearer()
