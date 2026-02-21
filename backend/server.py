@@ -855,19 +855,14 @@ async def get_events(
     """Get all events with sorting"""
     events_ref = db.collection('events')
     
-    # Determine sort field
-    sort_field = "date"
-    if sort_by == "signups":
-        sort_field = "rsvp_count"
-    elif sort_by == "created":
-        sort_field = "created_at"
-    
-    direction = firestore.Query.ASCENDING if sort_order == "asc" else firestore.Query.DESCENDING
-    
+    # Simplified query to avoid composite index requirement
+    # We'll filter and sort in Python instead of Firestore
     if active_only:
-        query = events_ref.where('is_active', '==', True).order_by(sort_field, direction=direction)
+        # Simple query with just the is_active filter
+        query = events_ref.where('is_active', '==', True)
     else:
-        query = events_ref.order_by(sort_field, direction=direction)
+        # Get all events
+        query = events_ref
     
     docs = query.stream()
     events = []
@@ -882,6 +877,21 @@ async def get_events(
                 events.append(Event(**event_dict))
         else:
             events.append(Event(**event_dict))
+    
+    # Sort in Python to avoid composite index requirement
+    sort_field = "date"
+    if sort_by == "signups":
+        sort_field = "rsvp_count"
+    elif sort_by == "created":
+        sort_field = "created_at"
+    
+    reverse_order = sort_order == "desc"
+    
+    try:
+        events.sort(key=lambda x: getattr(x, sort_field), reverse=reverse_order)
+    except AttributeError:
+        # Fallback to date sorting if field doesn't exist
+        events.sort(key=lambda x: x.date, reverse=reverse_order)
     
     return events
 
