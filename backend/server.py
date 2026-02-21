@@ -738,6 +738,25 @@ async def resend_verification(data: ResendVerificationRequest):
         verification_link=verification_link
     )
 
+class CheckVerificationRequest(BaseModel):
+    email: EmailStr
+
+class CheckVerificationResponse(BaseModel):
+    is_verified: bool
+
+@api_router.post("/auth/check-verification", response_model=CheckVerificationResponse)
+async def check_verification_status(data: CheckVerificationRequest):
+    """Check if an email has been verified (for polling during signup)"""
+    users_ref = db.collection('users')
+    user_query = users_ref.where('email', '==', data.email).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if not user_docs:
+        return CheckVerificationResponse(is_verified=False)
+    
+    user_dict = user_docs[0].to_dict()
+    return CheckVerificationResponse(is_verified=user_dict.get('is_verified', False))
+
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(data: LoginRequest):
     """Login with email and password"""

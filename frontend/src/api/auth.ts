@@ -66,6 +66,11 @@ export const authApi = {
     return response.data;
   },
 
+  checkVerificationStatus: async (email: string) => {
+    const response = await apiClient.post('/auth/check-verification', { email });
+    return response.data;
+  },
+
   login: async (data: LoginData) => {
     const response = await apiClient.post('/auth/login', data);
     return response.data;
