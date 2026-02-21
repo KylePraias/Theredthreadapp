@@ -144,7 +144,7 @@ class LoginRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     email: EmailStr
-    code: str
+    oob_code: str  # Firebase out-of-band code from the verification link
 
 class ResendVerificationRequest(BaseModel):
     email: EmailStr
