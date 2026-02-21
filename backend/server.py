@@ -548,9 +548,9 @@ async def verify_email(data: VerifyEmailRequest):
         logger.error("Email verification error: %s", str(e))
         raise HTTPException(status_code=400, detail="Verification failed. Please try again.")
 
-@api_router.post("/auth/resend-verification", response_model=MessageResponse)
+@api_router.post("/auth/resend-verification", response_model=RegistrationResponse)
 async def resend_verification(data: ResendVerificationRequest):
-    """Resend verification code"""
+    """Resend verification link"""
     users_ref = db.collection('users')
     user_query = users_ref.where('email', '==', data.email).limit(1)
     user_docs = list(user_query.stream())
@@ -562,27 +562,16 @@ async def resend_verification(data: ResendVerificationRequest):
     if user_dict['is_verified']:
         raise HTTPException(status_code=400, detail="Email already verified")
     
-    # Invalidate old codes
-    codes_ref = db.collection('verification_codes')
-    old_codes = codes_ref.where('email', '==', data.email).where('used', '==', False).stream()
-    for code_doc in old_codes:
-        code_doc.reference.update({'used': True})
+    # Generate and send new verification link
+    verification_link = await send_verification_email(data.email)
     
-    # Create new verification code
-    code = generate_verification_code()
-    verification = VerificationCode(
-        email=data.email,
-        code=code,
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
+    if not verification_link:
+        raise HTTPException(status_code=500, detail="Failed to generate verification link")
+    
+    return RegistrationResponse(
+        message="New verification link sent to your email",
+        verification_link=verification_link
     )
-    db.collection('verification_codes').document(verification.id).set(
-        serialize_for_firestore(verification.model_dump())
-    )
-    
-    # Send verification email
-    await send_verification_email(data.email, code)
-    
-    return MessageResponse(message="New verification code sent")
 
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(data: LoginRequest):
