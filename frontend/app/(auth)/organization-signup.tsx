@@ -14,6 +14,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { authApi } from '../../src/api/auth';
+import { storage } from '../../src/utils/storage';
 
 export default function OrganizationSignupScreen() {
   const router = useRouter();
