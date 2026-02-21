@@ -16,6 +16,8 @@ import string
 import requests
 from fastapi.responses import HTMLResponse
 
+import re
+
 # Firebase imports
 import firebase_admin
 from firebase_admin import credentials, firestore, auth as firebase_auth
@@ -41,6 +43,17 @@ JWT_EXPIRATION_HOURS = 24 * 7  # 1 week
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Password validation helper
+def validate_password(password: str) -> tuple[bool, str]:
+    """Validate password meets requirements: 8+ chars, 1 number, 1 special char"""
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long"
+    if not re.search(r'\d', password):
+        return False, "Password must contain at least one number"
+    if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+        return False, "Password must contain at least one special character (!@#$%^&* etc.)"
+    return True, ""
 
 # Security
 security = HTTPBearer()
@@ -469,6 +482,11 @@ class RegistrationResponse(BaseModel):
 @api_router.post("/auth/register/individual", response_model=RegistrationResponse)
 async def register_individual(data: IndividualRegister):
     """Register a new individual user"""
+    # Validate password
+    is_valid, error_message = validate_password(data.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_message)
+    
     # Check if email exists
     users_ref = db.collection('users')
     existing_query = users_ref.where('email', '==', data.email).limit(1)
@@ -518,6 +536,11 @@ async def register_individual(data: IndividualRegister):
 @api_router.post("/auth/register/organization", response_model=RegistrationResponse)
 async def register_organization(data: OrganizationRegister):
     """Register a new organization"""
+    # Validate password
+    is_valid, error_message = validate_password(data.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_message)
+    
     # Check if email exists
     users_ref = db.collection('users')
     existing_query = users_ref.where('email', '==', data.email).limit(1)

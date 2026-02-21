@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,19 @@ import { Ionicons } from '@expo/vector-icons';
 import { authApi } from '../../src/api/auth';
 import { storage } from '../../src/utils/storage';
 
+// Password validation helper
+const validatePassword = (password: string) => {
+  const hasMinLength = password.length >= 8;
+  const hasNumber = /\d/.test(password);
+  const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+  return {
+    isValid: hasMinLength && hasNumber && hasSpecialChar,
+    hasMinLength,
+    hasNumber,
+    hasSpecialChar,
+  };
+};
+
 export default function OrganizationSignupScreen() {
   const router = useRouter();
   const [name, setName] = useState('');
@@ -29,6 +42,8 @@ export default function OrganizationSignupScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
+  const passwordValidation = useMemo(() => validatePassword(password), [password]);
+
   const handleSignup = async () => {
     if (!name || !email || !contactEmail || !password || !description) {
       Alert.alert('Error', 'Please fill in all required fields');
@@ -40,8 +55,8 @@ export default function OrganizationSignupScreen() {
       return;
     }
 
-    if (password.length < 4) {
-      Alert.alert('Error', 'Password must be at least 4 characters');
+    if (!passwordValidation.isValid) {
+      Alert.alert('Error', 'Password does not meet requirements');
       return;
     }
 
@@ -199,6 +214,43 @@ export default function OrganizationSignupScreen() {
             />
           </View>
 
+          {/* Password Requirements */}
+          {password.length > 0 && (
+            <View style={styles.passwordRequirements}>
+              <Text style={styles.requirementsTitle}>Password Requirements:</Text>
+              <View style={styles.requirementRow}>
+                <Ionicons 
+                  name={passwordValidation.hasMinLength ? "checkmark-circle" : "close-circle"} 
+                  size={16} 
+                  color={passwordValidation.hasMinLength ? "#4caf50" : "#888"} 
+                />
+                <Text style={[styles.requirementText, passwordValidation.hasMinLength && styles.requirementMet]}>
+                  At least 8 characters
+                </Text>
+              </View>
+              <View style={styles.requirementRow}>
+                <Ionicons 
+                  name={passwordValidation.hasNumber ? "checkmark-circle" : "close-circle"} 
+                  size={16} 
+                  color={passwordValidation.hasNumber ? "#4caf50" : "#888"} 
+                />
+                <Text style={[styles.requirementText, passwordValidation.hasNumber && styles.requirementMet]}>
+                  At least one number
+                </Text>
+              </View>
+              <View style={styles.requirementRow}>
+                <Ionicons 
+                  name={passwordValidation.hasSpecialChar ? "checkmark-circle" : "close-circle"} 
+                  size={16} 
+                  color={passwordValidation.hasSpecialChar ? "#4caf50" : "#888"} 
+                />
+                <Text style={[styles.requirementText, passwordValidation.hasSpecialChar && styles.requirementMet]}>
+                  At least one special character (!@#$%^&* etc.)
+                </Text>
+              </View>
+            </View>
+          )}
+
           <TouchableOpacity
             style={styles.signupButton}
             onPress={handleSignup}
@@ -318,5 +370,31 @@ const styles = StyleSheet.create({
     color: '#ff9800',
     fontSize: 14,
     lineHeight: 20,
+  },
+  passwordRequirements: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  requirementsTitle: {
+    color: '#888',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  requirementRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  requirementText: {
+    color: '#888',
+    fontSize: 14,
+  },
+  requirementMet: {
+    color: '#4caf50',
   },
 });

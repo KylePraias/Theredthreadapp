@@ -5,7 +5,7 @@ import { useAuthStore } from '../../src/store/authStore';
 
 export default function TabsLayout() {
   const { user } = useAuthStore();
-  const isOrganization = user?.user_type === 'organization';
+  const isOrganization = user?.user_type === 'organization' && user?.approval_status === 'approved';
 
   return (
     <Tabs
@@ -44,18 +44,28 @@ export default function TabsLayout() {
           headerTitle: 'My RSVPs',
         }}
       />
-      {isOrganization && (
-        <Tabs.Screen
-          name="my-events"
-          options={{
-            title: 'My Events',
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="megaphone" size={size} color={color} />
-            ),
-            headerTitle: 'My Events',
-          }}
-        />
-      )}
+      <Tabs.Screen
+        name="my-events"
+        options={{
+          title: 'My Events',
+          href: isOrganization ? '/my-events' : null,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="megaphone" size={size} color={color} />
+          ),
+          headerTitle: 'My Events',
+        }}
+      />
+      <Tabs.Screen
+        name="create-event"
+        options={{
+          title: 'Create',
+          href: isOrganization ? '/create-event' : null,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="add-circle" size={size} color={color} />
+          ),
+          headerTitle: 'Create Event',
+        }}
+      />
       <Tabs.Screen
         name="settings"
         options={{
@@ -71,13 +81,6 @@ export default function TabsLayout() {
         options={{
           href: null,
           headerTitle: 'Event Details',
-        }}
-      />
-      <Tabs.Screen
-        name="create-event"
-        options={{
-          href: null,
-          headerTitle: 'Create Event',
         }}
       />
       <Tabs.Screen

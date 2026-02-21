@@ -36,14 +36,13 @@ export default function LoginScreen() {
       const response = await authApi.login({ email, password });
       await login(response.access_token, response.user);
       
-      // Route based on user type
-      if (response.user.user_type === 'admin') {
-        router.replace('/admin');
-      } else if (response.user.user_type === 'organization' && response.user.approval_status === 'pending') {
+      // Route based on user type and status
+      if (response.user.user_type === 'organization' && response.user.approval_status === 'pending') {
         router.replace('/(auth)/pending-approval');
       } else if (response.user.user_type === 'organization' && response.user.approval_status === 'rejected') {
         router.replace('/(auth)/rejected');
       } else {
+        // All users (including admin) go to event feed
         router.replace('/(tabs)');
       }
     } catch (error: any) {

@@ -60,17 +60,16 @@ export default function VerifyEmailCompleteScreen() {
     setError(null);
     try {
       const response = await authApi.verifyEmail(emailToVerify, tokenOrCode, isOobCode);
-      await login(response.access_token, response.user);
       
       // Clear the pending email
       await storage.deleteItem('pending_verification_email');
       
-      // Route based on user type
-      if (response.user.user_type === 'organization') {
-        router.replace('/(auth)/pending-approval');
-      } else {
-        router.replace('/(tabs)');
-      }
+      // Show success and redirect to login
+      Alert.alert(
+        'Email Verified!',
+        'Your email has been verified successfully. Please sign in to continue.',
+        [{ text: 'Sign In', onPress: () => router.replace('/(auth)/login') }]
+      );
     } catch (error: any) {
       const message = error.response?.data?.detail || 'Verification failed. Please try again.';
       setError(message);
