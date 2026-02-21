@@ -423,6 +423,55 @@ def test_user_profile_access(result):
 
 def test_password_change(result):
     """Test password change functionality"""
+def test_resend_verification(result):
+    """Test resend verification link functionality"""
+    try:
+        # First register a user to have an email to resend to
+        test_email = f"resendtest_{int(time.time())}@example.com"
+        register_data = {
+            "email": test_email,
+            "password": "testpassword123",
+            "display_name": "Resend Test User"
+        }
+        
+        register_response = make_request("POST", "/auth/register/individual", register_data)
+        if register_response.status_code == 200:
+            # Now test resend verification
+            resend_data = {"email": test_email}
+            response = make_request("POST", "/auth/resend-verification", resend_data)
+            
+            if response.status_code == 200:
+                response_data = response.json()
+                if "message" in response_data and "verification" in response_data["message"].lower():
+                    result.log_success("Resend Verification - New link sent")
+                    
+                    # Check if verification_link is returned (for development)
+                    if "verification_link" in response_data:
+                        verification_link = response_data["verification_link"]
+                        if "token=" in verification_link:
+                            result.log_success("Resend Verification - New verification link generated")
+                        else:
+                            result.log_failure("Resend Verification", "New link missing token parameter")
+                    else:
+                        result.log_success("Resend Verification - No verification_link in response (production mode)")
+                else:
+                    result.log_failure("Resend Verification", "Unexpected response message")
+            else:
+                error_msg = response.json().get("detail", f"Status {response.status_code}")
+                result.log_failure("Resend Verification", error_msg)
+        else:
+            result.log_failure("Resend Verification Setup", "Could not create test user for resend test")
+        
+        # Test resend for non-existent email
+        nonexistent_data = {"email": "nonexistent@example.com"}
+        response = make_request("POST", "/auth/resend-verification", nonexistent_data)
+        if response.status_code == 404:
+            result.log_success("Resend Verification - Non-existent email handling")
+        else:
+            result.log_failure("Resend Verification", f"Expected 404 for non-existent email, got {response.status_code}")
+            
+    except Exception as e:
+        result.log_failure("Resend Verification", str(e))
     try:
         # Test without auth
         change_data = {
