@@ -156,6 +156,43 @@ export default function IndividualSignupScreen() {
             />
           </View>
 
+          {/* Password Requirements */}
+          {password.length > 0 && (
+            <View style={styles.passwordRequirements}>
+              <Text style={styles.requirementsTitle}>Password Requirements:</Text>
+              <View style={styles.requirementRow}>
+                <Ionicons 
+                  name={passwordValidation.hasMinLength ? "checkmark-circle" : "close-circle"} 
+                  size={16} 
+                  color={passwordValidation.hasMinLength ? "#4caf50" : "#888"} 
+                />
+                <Text style={[styles.requirementText, passwordValidation.hasMinLength && styles.requirementMet]}>
+                  At least 8 characters
+                </Text>
+              </View>
+              <View style={styles.requirementRow}>
+                <Ionicons 
+                  name={passwordValidation.hasNumber ? "checkmark-circle" : "close-circle"} 
+                  size={16} 
+                  color={passwordValidation.hasNumber ? "#4caf50" : "#888"} 
+                />
+                <Text style={[styles.requirementText, passwordValidation.hasNumber && styles.requirementMet]}>
+                  At least one number
+                </Text>
+              </View>
+              <View style={styles.requirementRow}>
+                <Ionicons 
+                  name={passwordValidation.hasSpecialChar ? "checkmark-circle" : "close-circle"} 
+                  size={16} 
+                  color={passwordValidation.hasSpecialChar ? "#4caf50" : "#888"} 
+                />
+                <Text style={[styles.requirementText, passwordValidation.hasSpecialChar && styles.requirementMet]}>
+                  At least one special character (!@#$%^&* etc.)
+                </Text>
+              </View>
+            </View>
+          )}
+
           <View style={[styles.inputContainer, styles.textAreaContainer]}>
             <TextInput
               style={[styles.input, styles.textArea]}
