@@ -704,7 +704,7 @@ def test_login_after_verification(result):
             
             login_data = {
                 "email": "verified_user@example.com",  # This won't exist, but tests endpoint
-                "password": "testpassword123"
+                "password": "testpassword123!"  # Updated password
             }
             
             response = make_request("POST", "/auth/login", login_data)
