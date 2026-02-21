@@ -119,7 +119,7 @@ def test_admin_login(result):
     return False
 
 def test_individual_registration(result):
-    """Test individual user registration flow"""
+    """Test individual user registration flow with verification links"""
     global individual_token
     try:
         # Step 1: Register individual
@@ -136,23 +136,55 @@ def test_individual_registration(result):
         if response.status_code == 200:
             response_data = response.json()
             if "message" in response_data and "verification" in response_data["message"].lower():
-                result.log_success("Individual Registration - User created")
+                result.log_success("Individual Registration - User created with verification message")
                 
-                # Step 2: Check verification code in database (simulated since no SendGrid)
-                # In a real test, we would check logs or have a test endpoint
-                # For now, we'll use a test verification code
-                verify_data = {
-                    "email": test_email,
-                    "code": "123456"  # This will likely fail, but let's test the endpoint
-                }
+                # Step 2: Check if verification_link is returned (for development)
+                if "verification_link" in response_data:
+                    verification_link = response_data["verification_link"]
+                    result.log_success("Individual Registration - Verification link generated")
+                    
+                    # Extract token from verification link
+                    if "token=" in verification_link:
+                        token_start = verification_link.find("token=") + 6
+                        token_end = verification_link.find("&", token_start)
+                        if token_end == -1:
+                            token = verification_link[token_start:]
+                        else:
+                            token = verification_link[token_start:token_end]
+                        
+                        # Step 3: Test verification with token
+                        verify_data = {
+                            "email": test_email,
+                            "token": token
+                        }
+                        
+                        verify_response = make_request("POST", "/auth/verify-email", verify_data)
+                        if verify_response.status_code == 200:
+                            verify_result = verify_response.json()
+                            if "access_token" in verify_result and "user" in verify_result:
+                                individual_token = verify_result["access_token"]
+                                result.log_success("Email Verification - Token verification successful")
+                                return True
+                            else:
+                                result.log_failure("Email Verification", "Missing access_token or user in response")
+                        else:
+                            error_msg = verify_response.json().get("detail", f"Status {verify_response.status_code}")
+                            result.log_failure("Email Verification", error_msg)
+                    else:
+                        result.log_failure("Individual Registration", "Verification link missing token parameter")
+                else:
+                    result.log_success("Individual Registration - No verification_link in response (production mode)")
+                    
+                    # Test with invalid token to verify endpoint structure
+                    verify_data = {
+                        "email": test_email,
+                        "token": "invalid_token_123"
+                    }
+                    
+                    verify_response = make_request("POST", "/auth/verify-email", verify_data)
+                    if verify_response.status_code == 400:
+                        result.log_success("Email Verification - Invalid token handling")
                 
-                # First try with wrong code to test validation
-                verify_response = make_request("POST", "/auth/verify-email", verify_data)
-                if verify_response.status_code == 400:
-                    result.log_success("Email Verification - Invalid code handling")
-                
-                # Since we can't get the real verification code without SendGrid,
-                # we'll test the registration endpoint success
                 return True
             else:
                 result.log_failure("Individual Registration", "Unexpected response message")
