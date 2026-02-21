@@ -449,22 +449,35 @@ def test_google_oauth_endpoints(result):
         result.log_failure("Google OAuth endpoints", str(e))
 
 def test_email_verification_endpoint(result):
-    """Test email verification endpoint structure"""
+    """Test email verification endpoint with token parameter"""
     try:
+        # Test with invalid token
         verify_data = {
             "email": "nonexistent@example.com",
-            "code": "123456"
+            "token": "invalid_token_123"
         }
         
         response = make_request("POST", "/auth/verify-email", verify_data)
         if response.status_code == 400:
             error_detail = response.json().get("detail", "")
-            if "invalid" in error_detail.lower() or "code" in error_detail.lower():
-                result.log_success("Email Verification - Endpoint working (invalid code handled)")
+            if "invalid" in error_detail.lower() or "token" in error_detail.lower() or "expired" in error_detail.lower():
+                result.log_success("Email Verification - Token endpoint working (invalid token handled)")
             else:
                 result.log_failure("Email Verification", f"Unexpected error: {error_detail}")
         else:
             result.log_failure("Email Verification", f"Expected 400, got {response.status_code}")
+        
+        # Test with missing parameters
+        empty_data = {"email": "test@example.com"}
+        response = make_request("POST", "/auth/verify-email", empty_data)
+        if response.status_code == 400:
+            error_detail = response.json().get("detail", "")
+            if "token" in error_detail.lower() or "code" in error_detail.lower() or "required" in error_detail.lower():
+                result.log_success("Email Verification - Missing token/code validation")
+            else:
+                result.log_failure("Email Verification", f"Unexpected validation error: {error_detail}")
+        else:
+            result.log_failure("Email Verification", f"Expected 400 for missing params, got {response.status_code}")
             
     except Exception as e:
         result.log_failure("Email Verification endpoint", str(e))
