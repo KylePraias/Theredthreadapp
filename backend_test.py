@@ -69,23 +69,31 @@ def make_request(method, endpoint, data=None, headers=None, auth_token=None):
     except requests.exceptions.RequestException as e:
         raise Exception(f"Request failed: {str(e)}")
 
-def test_health_check(result):
-    """Test basic health endpoint"""
+def test_health_check_database(result):
+    """Test health check returns Firebase Firestore as database"""
     try:
         response = make_request("GET", "/")
         if response.status_code == 200:
-            result.log_success("Health Check - Root endpoint")
+            data = response.json()
+            if "database" in data and "Firebase Firestore" in data["database"]:
+                result.log_success("Health Check - Returns Firebase Firestore as database")
+            else:
+                result.log_failure("Health Check", f"Database field missing or incorrect: {data}")
         else:
             result.log_failure("Health Check - Root endpoint", f"Status {response.status_code}")
         
         response = make_request("GET", "/health")
         if response.status_code == 200:
-            result.log_success("Health Check - Health endpoint")
+            data = response.json()
+            if "database" in data and "Firebase Firestore" in data["database"]:
+                result.log_success("Health Check - Health endpoint returns Firebase Firestore")
+            else:
+                result.log_failure("Health Check", f"Health endpoint database field missing or incorrect: {data}")
         else:
             result.log_failure("Health Check - Health endpoint", f"Status {response.status_code}")
             
     except Exception as e:
-        result.log_failure("Health Check", str(e))
+        result.log_failure("Health Check Database", str(e))
 
 def test_admin_login(result):
     """Test admin login"""
