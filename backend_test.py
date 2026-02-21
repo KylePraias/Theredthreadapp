@@ -319,7 +319,7 @@ def create_test_organization_user(result):
         # This is acceptable for testing purposes
         
         # Try to login (this will fail since not verified, but that's expected)
-        login_data = {"email": test_email, "password": "testpassword123"}
+        login_data = {"email": test_email, "password": "testpassword123!"}  # Updated password
         login_response = make_request("POST", "/auth/login", login_data)
         
         if login_response.status_code == 400 and "verify" in login_response.json().get("detail", "").lower():
