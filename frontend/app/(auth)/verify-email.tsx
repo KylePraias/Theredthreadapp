@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,8 @@ export default function VerifyEmailScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [verificationLink, setVerificationLink] = useState<string | null>(null);
+  const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if we have an oobCode from the URL (user clicked verification link)
   useEffect(() => {
@@ -27,6 +29,43 @@ export default function VerifyEmailScreen() {
       handleVerifyWithCode(params.oobCode);
     }
   }, [params.oobCode]);
+
+  // Poll to check if email has been verified
+  useEffect(() => {
+    const checkVerificationStatus = async () => {
+      if (!params.email || isLoading) return;
+      
+      try {
+        // Try to login - if successful, email is verified
+        const response = await authApi.login({ email: params.email, password: '' });
+        // If we get here without error, something went wrong with our logic
+      } catch (error: any) {
+        const message = error.response?.data?.detail || '';
+        // If the error is "Please verify your email first", still not verified
+        // If the error is "Invalid credentials", the email is verified but password is wrong
+        if (message === 'Invalid credentials') {
+          // Email is verified! Redirect to login
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+          }
+          Alert.alert(
+            'Email Verified!',
+            'Your email has been verified. Please sign in to continue.',
+            [{ text: 'Sign In', onPress: () => router.replace('/(auth)/login') }]
+          );
+        }
+      }
+    };
+
+    // Start polling every 3 seconds
+    pollingIntervalRef.current = setInterval(checkVerificationStatus, 3000);
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, [params.email, isLoading]);
 
   // Handle deep link for email verification
   useEffect(() => {
