@@ -2,27 +2,33 @@ from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Literal
+from typing import List, Optional
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import random
 import string
-import base64
+
+# Firebase imports
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+# Firebase initialization
+firebase_cred_path = ROOT_DIR / 'firebase-admin.json'
+if not firebase_admin._apps:
+    cred = credentials.Certificate(str(firebase_cred_path))
+    firebase_admin.initialize_app(cred)
+
+# Firestore client
+db = firestore.client()
 
 # JWT Configuration
 JWT_SECRET = os.environ.get('JWT_SECRET', 'your-super-secret-key-change-in-production')
@@ -65,7 +71,7 @@ class UserBase(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: EmailStr
     user_type: str  # individual, organization, admin
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_verified: bool = False
     is_active: bool = True
 
@@ -149,7 +155,7 @@ class VerificationCode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: EmailStr
     code: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime
     used: bool = False
 
@@ -170,8 +176,8 @@ class Event(BaseModel):
     contact_email: Optional[EmailStr] = None
     date: datetime
     location: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
     rsvp_count: int = 0
 
@@ -189,7 +195,7 @@ class RSVP(BaseModel):
     user_id: str
     user_email: str
     user_name: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # Response Models
 class UserResponse(BaseModel):
@@ -212,6 +218,40 @@ class TokenResponse(BaseModel):
 class MessageResponse(BaseModel):
     message: str
 
+# ============== FIRESTORE HELPER FUNCTIONS ==============
+
+def serialize_for_firestore(data: dict) -> dict:
+    """Convert datetime objects to ISO strings for Firestore"""
+    result = {}
+    for key, value in data.items():
+        if isinstance(value, datetime):
+            result[key] = value.isoformat()
+        elif isinstance(value, dict):
+            result[key] = serialize_for_firestore(value)
+        elif isinstance(value, list):
+            result[key] = [serialize_for_firestore(v) if isinstance(v, dict) else v for v in value]
+        else:
+            result[key] = value
+    return result
+
+def deserialize_from_firestore(data: dict) -> dict:
+    """Convert ISO strings back to datetime objects from Firestore"""
+    if not data:
+        return data
+    result = {}
+    datetime_fields = ['created_at', 'updated_at', 'expires_at', 'date']
+    for key, value in data.items():
+        if key in datetime_fields and isinstance(value, str):
+            try:
+                result[key] = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except:
+                result[key] = value
+        elif isinstance(value, dict):
+            result[key] = deserialize_from_firestore(value)
+        else:
+            result[key] = value
+    return result
+
 # ============== HELPER FUNCTIONS ==============
 
 def generate_verification_code() -> str:
@@ -226,7 +266,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def create_access_token(data: dict) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS)
+    expire = datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -241,7 +281,15 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
     
-    user_dict = await db.users.find_one({"id": user_id})
+    # Query Firestore for user
+    users_ref = db.collection('users')
+    query = users_ref.where('id', '==', user_id).limit(1)
+    docs = query.stream()
+    user_dict = None
+    for doc in docs:
+        user_dict = deserialize_from_firestore(doc.to_dict())
+        break
+    
     if user_dict is None:
         raise HTTPException(status_code=401, detail="User not found")
     
@@ -276,80 +324,73 @@ def user_to_response(user: User) -> UserResponse:
     )
 
 async def send_verification_email(email: str, code: str):
-    """Send verification email via SendGrid"""
-    sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
-    sender_email = os.environ.get('SENDER_EMAIL')
-    
-    if not sendgrid_api_key or not sender_email:
-        logger.warning("SendGrid not configured, verification code: %s", code)
-        return False
-    
+    """
+    Send verification email using Firebase Firestore 'mail' collection.
+    This works with Firebase Extensions 'Trigger Email' if configured.
+    If not configured, we log the email for development purposes.
+    """
     try:
-        from sendgrid import SendGridAPIClient
-        from sendgrid.helpers.mail import Mail
+        mail_data = {
+            'to': email,
+            'message': {
+                'subject': 'Your Verification Code - Red Thread',
+                'html': f'''
+                <html>
+                    <body style="font-family: Arial, sans-serif; padding: 20px;">
+                        <h2>Welcome to Red Thread!</h2>
+                        <p>Your verification code is:</p>
+                        <h1 style="color: #d32f2f; font-size: 36px; letter-spacing: 5px;">{code}</h1>
+                        <p>This code expires in 10 minutes.</p>
+                        <p>If you didn't request this code, please ignore this email.</p>
+                    </body>
+                </html>
+                '''
+            },
+            'created_at': datetime.now(timezone.utc).isoformat()
+        }
         
-        message = Mail(
-            from_email=sender_email,
-            to_emails=email,
-            subject='Your Verification Code - Red Thread',
-            html_content=f'''
-            <html>
-                <body style="font-family: Arial, sans-serif; padding: 20px;">
-                    <h2>Welcome to Red Thread!</h2>
-                    <p>Your verification code is:</p>
-                    <h1 style="color: #d32f2f; font-size: 36px; letter-spacing: 5px;">{code}</h1>
-                    <p>This code expires in 10 minutes.</p>
-                    <p>If you didn't request this code, please ignore this email.</p>
-                </body>
-            </html>
-            '''
-        )
-        
-        sg = SendGridAPIClient(sendgrid_api_key)
-        response = sg.send(message)
-        return response.status_code == 202
+        # Add to Firestore 'mail' collection (Firebase Trigger Email extension will pick this up)
+        db.collection('mail').add(mail_data)
+        logger.info("Verification email queued for: %s, code: %s", email, code)
+        return True
     except Exception as e:
-        logger.error("Failed to send verification email: %s", str(e))
+        logger.error("Failed to queue verification email: %s", str(e))
+        logger.warning("Verification code for %s: %s", email, code)
         return False
 
 async def send_admin_notification(org_name: str, org_email: str):
-    """Notify admin about new organization signup"""
-    sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
-    sender_email = os.environ.get('SENDER_EMAIL')
+    """
+    Notify admin about new organization signup using Firebase Firestore 'mail' collection.
+    """
     admin_email = "theredthreadapp@gmail.com"
     
-    if not sendgrid_api_key or not sender_email:
-        logger.warning("SendGrid not configured, skipping admin notification for org: %s", org_name)
-        return False
-    
     try:
-        from sendgrid import SendGridAPIClient
-        from sendgrid.helpers.mail import Mail
+        mail_data = {
+            'to': admin_email,
+            'message': {
+                'subject': f'New Organization Pending Approval - {org_name}',
+                'html': f'''
+                <html>
+                    <body style="font-family: Arial, sans-serif; padding: 20px;">
+                        <h2>New Organization Registration</h2>
+                        <p>A new organization has registered and is awaiting approval:</p>
+                        <ul>
+                            <li><strong>Name:</strong> {org_name}</li>
+                            <li><strong>Email:</strong> {org_email}</li>
+                        </ul>
+                        <p>Please log in to the admin panel to review and approve/reject this organization.</p>
+                    </body>
+                </html>
+                '''
+            },
+            'created_at': datetime.now(timezone.utc).isoformat()
+        }
         
-        message = Mail(
-            from_email=sender_email,
-            to_emails=admin_email,
-            subject=f'New Organization Pending Approval - {org_name}',
-            html_content=f'''
-            <html>
-                <body style="font-family: Arial, sans-serif; padding: 20px;">
-                    <h2>New Organization Registration</h2>
-                    <p>A new organization has registered and is awaiting approval:</p>
-                    <ul>
-                        <li><strong>Name:</strong> {org_name}</li>
-                        <li><strong>Email:</strong> {org_email}</li>
-                    </ul>
-                    <p>Please log in to the admin panel to review and approve/reject this organization.</p>
-                </body>
-            </html>
-            '''
-        )
-        
-        sg = SendGridAPIClient(sendgrid_api_key)
-        response = sg.send(message)
-        return response.status_code == 202
+        db.collection('mail').add(mail_data)
+        logger.info("Admin notification queued for new org: %s", org_name)
+        return True
     except Exception as e:
-        logger.error("Failed to send admin notification: %s", str(e))
+        logger.error("Failed to queue admin notification: %s", str(e))
         return False
 
 # ============== AUTH ROUTES ==============
@@ -358,8 +399,10 @@ async def send_admin_notification(org_name: str, org_email: str):
 async def register_individual(data: IndividualRegister):
     """Register a new individual user"""
     # Check if email exists
-    existing = await db.users.find_one({"email": data.email})
-    if existing:
+    users_ref = db.collection('users')
+    existing_query = users_ref.where('email', '==', data.email).limit(1)
+    existing_docs = list(existing_query.stream())
+    if existing_docs:
         raise HTTPException(status_code=400, detail="Email already registered")
     
     # Create verification code
@@ -367,9 +410,11 @@ async def register_individual(data: IndividualRegister):
     verification = VerificationCode(
         email=data.email,
         code=code,
-        expires_at=datetime.utcnow() + timedelta(minutes=10)
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
     )
-    await db.verification_codes.insert_one(verification.dict())
+    db.collection('verification_codes').document(verification.id).set(
+        serialize_for_firestore(verification.model_dump())
+    )
     
     # Create user (unverified)
     user = User(
@@ -385,7 +430,9 @@ async def register_individual(data: IndividualRegister):
             interests=data.interests or []
         )
     )
-    await db.users.insert_one(user.dict())
+    db.collection('users').document(user.id).set(
+        serialize_for_firestore(user.model_dump())
+    )
     
     # Send verification email
     await send_verification_email(data.email, code)
@@ -396,8 +443,10 @@ async def register_individual(data: IndividualRegister):
 async def register_organization(data: OrganizationRegister):
     """Register a new organization"""
     # Check if email exists
-    existing = await db.users.find_one({"email": data.email})
-    if existing:
+    users_ref = db.collection('users')
+    existing_query = users_ref.where('email', '==', data.email).limit(1)
+    existing_docs = list(existing_query.stream())
+    if existing_docs:
         raise HTTPException(status_code=400, detail="Email already registered")
     
     # Create verification code
@@ -405,9 +454,11 @@ async def register_organization(data: OrganizationRegister):
     verification = VerificationCode(
         email=data.email,
         code=code,
-        expires_at=datetime.utcnow() + timedelta(minutes=10)
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
     )
-    await db.verification_codes.insert_one(verification.dict())
+    db.collection('verification_codes').document(verification.id).set(
+        serialize_for_firestore(verification.model_dump())
+    )
     
     # Create organization user (unverified, pending approval)
     user = User(
@@ -426,7 +477,9 @@ async def register_organization(data: OrganizationRegister):
             areas_of_focus=data.areas_of_focus or []
         )
     )
-    await db.users.insert_one(user.dict())
+    db.collection('users').document(user.id).set(
+        serialize_for_firestore(user.model_dump())
+    )
     
     # Send verification email
     await send_verification_email(data.email, code)
@@ -437,32 +490,34 @@ async def register_organization(data: OrganizationRegister):
 async def verify_email(data: VerifyEmailRequest):
     """Verify email with code"""
     # Find the verification code
-    verification = await db.verification_codes.find_one({
-        "email": data.email,
-        "code": data.code,
-        "used": False
-    })
+    codes_ref = db.collection('verification_codes')
+    query = codes_ref.where('email', '==', data.email).where('code', '==', data.code).where('used', '==', False).limit(1)
+    docs = list(query.stream())
     
-    if not verification:
+    if not docs:
         raise HTTPException(status_code=400, detail="Invalid verification code")
     
-    if datetime.utcnow() > verification['expires_at']:
+    verification = deserialize_from_firestore(docs[0].to_dict())
+    
+    if datetime.now(timezone.utc) > verification['expires_at']:
         raise HTTPException(status_code=400, detail="Verification code expired")
     
     # Mark code as used
-    await db.verification_codes.update_one(
-        {"id": verification['id']},
-        {"$set": {"used": True}}
-    )
+    db.collection('verification_codes').document(verification['id']).update({'used': True})
     
-    # Update user as verified
-    await db.users.update_one(
-        {"email": data.email},
-        {"$set": {"is_verified": True}}
-    )
+    # Find and update user as verified
+    users_ref = db.collection('users')
+    user_query = users_ref.where('email', '==', data.email).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if not user_docs:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user_doc = user_docs[0]
+    db.collection('users').document(user_doc.id).update({'is_verified': True})
     
     # Get updated user
-    user_dict = await db.users.find_one({"email": data.email})
+    user_dict = deserialize_from_firestore(db.collection('users').document(user_doc.id).get().to_dict())
     user = User(**user_dict)
     
     # If organization, notify admin
@@ -483,27 +538,33 @@ async def verify_email(data: VerifyEmailRequest):
 @api_router.post("/auth/resend-verification", response_model=MessageResponse)
 async def resend_verification(data: ResendVerificationRequest):
     """Resend verification code"""
-    user = await db.users.find_one({"email": data.email})
-    if not user:
+    users_ref = db.collection('users')
+    user_query = users_ref.where('email', '==', data.email).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if not user_docs:
         raise HTTPException(status_code=404, detail="Email not found")
     
-    if user['is_verified']:
+    user_dict = user_docs[0].to_dict()
+    if user_dict['is_verified']:
         raise HTTPException(status_code=400, detail="Email already verified")
     
     # Invalidate old codes
-    await db.verification_codes.update_many(
-        {"email": data.email, "used": False},
-        {"$set": {"used": True}}
-    )
+    codes_ref = db.collection('verification_codes')
+    old_codes = codes_ref.where('email', '==', data.email).where('used', '==', False).stream()
+    for code_doc in old_codes:
+        code_doc.reference.update({'used': True})
     
     # Create new verification code
     code = generate_verification_code()
     verification = VerificationCode(
         email=data.email,
         code=code,
-        expires_at=datetime.utcnow() + timedelta(minutes=10)
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10)
     )
-    await db.verification_codes.insert_one(verification.dict())
+    db.collection('verification_codes').document(verification.id).set(
+        serialize_for_firestore(verification.model_dump())
+    )
     
     # Send verification email
     await send_verification_email(data.email, code)
@@ -513,10 +574,14 @@ async def resend_verification(data: ResendVerificationRequest):
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(data: LoginRequest):
     """Login with email and password"""
-    user_dict = await db.users.find_one({"email": data.email})
-    if not user_dict:
+    users_ref = db.collection('users')
+    user_query = users_ref.where('email', '==', data.email).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if not user_docs:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     
+    user_dict = deserialize_from_firestore(user_docs[0].to_dict())
     user = User(**user_dict)
     
     if user.auth_provider != "email":
@@ -542,36 +607,46 @@ async def login(data: LoginRequest):
 async def google_sign_in_individual(data: GoogleSignIn):
     """Google sign-in for individuals"""
     # Check if user exists by firebase_uid or email
-    existing = await db.users.find_one({
-        "$or": [
-            {"firebase_uid": data.firebase_uid},
-            {"email": data.email}
-        ]
-    })
+    users_ref = db.collection('users')
     
-    if existing:
-        # Update firebase_uid if needed
-        if not existing.get('firebase_uid'):
-            await db.users.update_one(
-                {"id": existing['id']},
-                {"$set": {"firebase_uid": data.firebase_uid, "auth_provider": "google"}}
-            )
-        user = User(**existing)
+    # Check by firebase_uid first
+    uid_query = users_ref.where('firebase_uid', '==', data.firebase_uid).limit(1)
+    uid_docs = list(uid_query.stream())
+    
+    if uid_docs:
+        user_dict = deserialize_from_firestore(uid_docs[0].to_dict())
+        user = User(**user_dict)
     else:
-        # Create new user
-        user = User(
-            email=data.email,
-            firebase_uid=data.firebase_uid,
-            user_type="individual",
-            auth_provider="google",
-            is_verified=True,  # Google accounts are pre-verified
-            approval_status="approved",
-            individual_profile=IndividualProfile(
-                display_name=data.display_name,
-                profile_image=data.profile_image
+        # Check by email
+        email_query = users_ref.where('email', '==', data.email).limit(1)
+        email_docs = list(email_query.stream())
+        
+        if email_docs:
+            existing = deserialize_from_firestore(email_docs[0].to_dict())
+            # Update firebase_uid if needed
+            if not existing.get('firebase_uid'):
+                db.collection('users').document(email_docs[0].id).update({
+                    'firebase_uid': data.firebase_uid,
+                    'auth_provider': 'google'
+                })
+            user = User(**existing)
+        else:
+            # Create new user
+            user = User(
+                email=data.email,
+                firebase_uid=data.firebase_uid,
+                user_type="individual",
+                auth_provider="google",
+                is_verified=True,  # Google accounts are pre-verified
+                approval_status="approved",
+                individual_profile=IndividualProfile(
+                    display_name=data.display_name,
+                    profile_image=data.profile_image
+                )
             )
-        )
-        await db.users.insert_one(user.dict())
+            db.collection('users').document(user.id).set(
+                serialize_for_firestore(user.model_dump())
+            )
     
     token = create_access_token({"sub": user.id})
     
@@ -583,38 +658,47 @@ async def google_sign_in_individual(data: GoogleSignIn):
 @api_router.post("/auth/google/organization", response_model=TokenResponse)
 async def google_sign_in_organization(data: GoogleOrgSignIn):
     """Google sign-in for organizations"""
-    # Check if user exists by firebase_uid or email
-    existing = await db.users.find_one({
-        "$or": [
-            {"firebase_uid": data.firebase_uid},
-            {"email": data.email}
-        ]
-    })
+    users_ref = db.collection('users')
     
-    if existing:
-        user = User(**existing)
+    # Check by firebase_uid first
+    uid_query = users_ref.where('firebase_uid', '==', data.firebase_uid).limit(1)
+    uid_docs = list(uid_query.stream())
+    
+    if uid_docs:
+        user_dict = deserialize_from_firestore(uid_docs[0].to_dict())
+        user = User(**user_dict)
     else:
-        # Create new organization user
-        user = User(
-            email=data.email,
-            firebase_uid=data.firebase_uid,
-            user_type="organization",
-            auth_provider="google",
-            is_verified=True,  # Google accounts are pre-verified
-            approval_status="pending",  # Still needs admin approval
-            organization_profile=OrganizationProfile(
-                name=data.name,
-                description=data.description,
-                contact_email=data.contact_email,
-                website=data.website,
-                social_links=data.social_links or {},
-                areas_of_focus=data.areas_of_focus or []
-            )
-        )
-        await db.users.insert_one(user.dict())
+        # Check by email
+        email_query = users_ref.where('email', '==', data.email).limit(1)
+        email_docs = list(email_query.stream())
         
-        # Notify admin
-        await send_admin_notification(data.name, data.email)
+        if email_docs:
+            user_dict = deserialize_from_firestore(email_docs[0].to_dict())
+            user = User(**user_dict)
+        else:
+            # Create new organization user
+            user = User(
+                email=data.email,
+                firebase_uid=data.firebase_uid,
+                user_type="organization",
+                auth_provider="google",
+                is_verified=True,  # Google accounts are pre-verified
+                approval_status="pending",  # Still needs admin approval
+                organization_profile=OrganizationProfile(
+                    name=data.name,
+                    description=data.description,
+                    contact_email=data.contact_email,
+                    website=data.website,
+                    social_links=data.social_links or {},
+                    areas_of_focus=data.areas_of_focus or []
+                )
+            )
+            db.collection('users').document(user.id).set(
+                serialize_for_firestore(user.model_dump())
+            )
+            
+            # Notify admin
+            await send_admin_notification(data.name, data.email)
     
     token = create_access_token({"sub": user.id})
     
@@ -633,10 +717,13 @@ async def change_password(data: ChangePasswordRequest, current_user: User = Depe
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     
     new_hash = hash_password(data.new_password)
-    await db.users.update_one(
-        {"id": current_user.id},
-        {"$set": {"password_hash": new_hash}}
-    )
+    
+    # Find user document and update
+    users_ref = db.collection('users')
+    user_query = users_ref.where('id', '==', current_user.id).limit(1)
+    user_docs = list(user_query.stream())
+    if user_docs:
+        db.collection('users').document(user_docs[0].id).update({'password_hash': new_hash})
     
     return MessageResponse(message="Password changed successfully")
 
@@ -656,12 +743,17 @@ async def update_individual_profile(
     if current_user.user_type != "individual":
         raise HTTPException(status_code=400, detail="Not an individual account")
     
-    await db.users.update_one(
-        {"id": current_user.id},
-        {"$set": {"individual_profile": profile.dict()}}
-    )
+    users_ref = db.collection('users')
+    user_query = users_ref.where('id', '==', current_user.id).limit(1)
+    user_docs = list(user_query.stream())
+    if user_docs:
+        db.collection('users').document(user_docs[0].id).update({
+            'individual_profile': profile.model_dump()
+        })
     
-    user_dict = await db.users.find_one({"id": current_user.id})
+    # Get updated user
+    updated_doc = db.collection('users').document(user_docs[0].id).get()
+    user_dict = deserialize_from_firestore(updated_doc.to_dict())
     return user_to_response(User(**user_dict))
 
 @api_router.put("/users/me/organization", response_model=UserResponse)
@@ -673,12 +765,17 @@ async def update_organization_profile(
     if current_user.user_type != "organization":
         raise HTTPException(status_code=400, detail="Not an organization account")
     
-    await db.users.update_one(
-        {"id": current_user.id},
-        {"$set": {"organization_profile": profile.dict()}}
-    )
+    users_ref = db.collection('users')
+    user_query = users_ref.where('id', '==', current_user.id).limit(1)
+    user_docs = list(user_query.stream())
+    if user_docs:
+        db.collection('users').document(user_docs[0].id).update({
+            'organization_profile': profile.model_dump()
+        })
     
-    user_dict = await db.users.find_one({"id": current_user.id})
+    # Get updated user
+    updated_doc = db.collection('users').document(user_docs[0].id).get()
+    user_dict = deserialize_from_firestore(updated_doc.to_dict())
     return user_to_response(User(**user_dict))
 
 # ============== ADMIN ROUTES ==============
@@ -686,49 +783,50 @@ async def update_organization_profile(
 @api_router.get("/admin/organizations/pending", response_model=List[UserResponse])
 async def get_pending_organizations(admin: User = Depends(get_admin_user)):
     """Get all pending organization approvals"""
-    orgs = await db.users.find({
-        "user_type": "organization",
-        "approval_status": "pending",
-        "is_verified": True
-    }).to_list(1000)
+    users_ref = db.collection('users')
+    query = users_ref.where('user_type', '==', 'organization').where('approval_status', '==', 'pending').where('is_verified', '==', True)
+    docs = query.stream()
     
-    return [user_to_response(User(**org)) for org in orgs]
+    return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
 
 @api_router.post("/admin/organizations/{org_id}/approve", response_model=UserResponse)
 async def approve_organization(org_id: str, admin: User = Depends(get_admin_user)):
     """Approve an organization"""
-    org = await db.users.find_one({"id": org_id, "user_type": "organization"})
-    if not org:
+    users_ref = db.collection('users')
+    query = users_ref.where('id', '==', org_id).where('user_type', '==', 'organization').limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
         raise HTTPException(status_code=404, detail="Organization not found")
     
-    await db.users.update_one(
-        {"id": org_id},
-        {"$set": {"approval_status": "approved"}}
-    )
+    db.collection('users').document(docs[0].id).update({'approval_status': 'approved'})
     
-    org_dict = await db.users.find_one({"id": org_id})
-    return user_to_response(User(**org_dict))
+    updated_doc = db.collection('users').document(docs[0].id).get()
+    return user_to_response(User(**deserialize_from_firestore(updated_doc.to_dict())))
 
 @api_router.post("/admin/organizations/{org_id}/reject", response_model=UserResponse)
 async def reject_organization(org_id: str, admin: User = Depends(get_admin_user)):
     """Reject an organization"""
-    org = await db.users.find_one({"id": org_id, "user_type": "organization"})
-    if not org:
+    users_ref = db.collection('users')
+    query = users_ref.where('id', '==', org_id).where('user_type', '==', 'organization').limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
         raise HTTPException(status_code=404, detail="Organization not found")
     
-    await db.users.update_one(
-        {"id": org_id},
-        {"$set": {"approval_status": "rejected"}}
-    )
+    db.collection('users').document(docs[0].id).update({'approval_status': 'rejected'})
     
-    org_dict = await db.users.find_one({"id": org_id})
-    return user_to_response(User(**org_dict))
+    updated_doc = db.collection('users').document(docs[0].id).get()
+    return user_to_response(User(**deserialize_from_firestore(updated_doc.to_dict())))
 
 @api_router.get("/admin/organizations/all", response_model=List[UserResponse])
 async def get_all_organizations(admin: User = Depends(get_admin_user)):
     """Get all organizations"""
-    orgs = await db.users.find({"user_type": "organization"}).to_list(1000)
-    return [user_to_response(User(**org)) for org in orgs]
+    users_ref = db.collection('users')
+    query = users_ref.where('user_type', '==', 'organization')
+    docs = query.stream()
+    
+    return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
 
 # ============== EVENT ROUTES ==============
 
@@ -741,9 +839,11 @@ async def create_event(
     event = Event(
         organization_id=current_user.id,
         organization_name=current_user.organization_profile.name,
-        **event_data.dict()
+        **event_data.model_dump()
     )
-    await db.events.insert_one(event.dict())
+    db.collection('events').document(event.id).set(
+        serialize_for_firestore(event.model_dump())
+    )
     return event
 
 @api_router.get("/events", response_model=List[Event])
@@ -753,10 +853,7 @@ async def get_events(
     active_only: bool = True
 ):
     """Get all events with sorting"""
-    query = {}
-    if active_only:
-        query["is_active"] = True
-        query["date"] = {"$gte": datetime.utcnow()}
+    events_ref = db.collection('events')
     
     # Determine sort field
     sort_field = "date"
@@ -765,18 +862,40 @@ async def get_events(
     elif sort_by == "created":
         sort_field = "created_at"
     
-    sort_direction = 1 if sort_order == "asc" else -1
+    direction = firestore.Query.ASCENDING if sort_order == "asc" else firestore.Query.DESCENDING
     
-    events = await db.events.find(query).sort(sort_field, sort_direction).to_list(1000)
-    return [Event(**event) for event in events]
+    if active_only:
+        query = events_ref.where('is_active', '==', True).order_by(sort_field, direction=direction)
+    else:
+        query = events_ref.order_by(sort_field, direction=direction)
+    
+    docs = query.stream()
+    events = []
+    now = datetime.now(timezone.utc)
+    
+    for doc in docs:
+        event_dict = deserialize_from_firestore(doc.to_dict())
+        if active_only:
+            # Filter out past events
+            event_date = event_dict.get('date')
+            if isinstance(event_date, datetime) and event_date >= now:
+                events.append(Event(**event_dict))
+        else:
+            events.append(Event(**event_dict))
+    
+    return events
 
 @api_router.get("/events/{event_id}", response_model=Event)
 async def get_event(event_id: str):
     """Get a specific event"""
-    event = await db.events.find_one({"id": event_id})
-    if not event:
+    events_ref = db.collection('events')
+    query = events_ref.where('id', '==', event_id).limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
         raise HTTPException(status_code=404, detail="Event not found")
-    return Event(**event)
+    
+    return Event(**deserialize_from_firestore(docs[0].to_dict()))
 
 @api_router.put("/events/{event_id}", response_model=Event)
 async def update_event(
@@ -785,23 +904,28 @@ async def update_event(
     current_user: User = Depends(get_organization_user)
 ):
     """Update an event (owner organization only)"""
-    event = await db.events.find_one({"id": event_id})
-    if not event:
+    events_ref = db.collection('events')
+    query = events_ref.where('id', '==', event_id).limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
         raise HTTPException(status_code=404, detail="Event not found")
     
-    if event['organization_id'] != current_user.id:
+    event_dict = docs[0].to_dict()
+    if event_dict['organization_id'] != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to update this event")
     
-    update_data = {k: v for k, v in event_data.dict().items() if v is not None}
-    update_data["updated_at"] = datetime.utcnow()
+    update_data = {k: v for k, v in event_data.model_dump().items() if v is not None}
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     
-    await db.events.update_one(
-        {"id": event_id},
-        {"$set": update_data}
-    )
+    # Serialize datetime fields
+    if 'date' in update_data and isinstance(update_data['date'], datetime):
+        update_data['date'] = update_data['date'].isoformat()
     
-    event_dict = await db.events.find_one({"id": event_id})
-    return Event(**event_dict)
+    db.collection('events').document(docs[0].id).update(update_data)
+    
+    updated_doc = db.collection('events').document(docs[0].id).get()
+    return Event(**deserialize_from_firestore(updated_doc.to_dict()))
 
 @api_router.delete("/events/{event_id}", response_model=MessageResponse)
 async def delete_event(
@@ -809,39 +933,56 @@ async def delete_event(
     current_user: User = Depends(get_organization_user)
 ):
     """Delete an event (owner organization only)"""
-    event = await db.events.find_one({"id": event_id})
-    if not event:
+    events_ref = db.collection('events')
+    query = events_ref.where('id', '==', event_id).limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
         raise HTTPException(status_code=404, detail="Event not found")
     
-    if event['organization_id'] != current_user.id:
+    event_dict = docs[0].to_dict()
+    if event_dict['organization_id'] != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized to delete this event")
     
-    await db.events.delete_one({"id": event_id})
-    await db.rsvps.delete_many({"event_id": event_id})
+    # Delete event
+    db.collection('events').document(docs[0].id).delete()
+    
+    # Delete associated RSVPs
+    rsvps_ref = db.collection('rsvps')
+    rsvp_query = rsvps_ref.where('event_id', '==', event_id)
+    rsvp_docs = rsvp_query.stream()
+    for rsvp_doc in rsvp_docs:
+        rsvp_doc.reference.delete()
     
     return MessageResponse(message="Event deleted successfully")
 
 @api_router.get("/organizations/{org_id}/events", response_model=List[Event])
 async def get_organization_events(org_id: str):
     """Get all events by an organization"""
-    events = await db.events.find({"organization_id": org_id}).sort("date", 1).to_list(1000)
-    return [Event(**event) for event in events]
+    events_ref = db.collection('events')
+    query = events_ref.where('organization_id', '==', org_id).order_by('date')
+    docs = query.stream()
+    
+    return [Event(**deserialize_from_firestore(doc.to_dict())) for doc in docs]
 
 # ============== RSVP ROUTES ==============
 
 @api_router.post("/events/{event_id}/rsvp", response_model=RSVP)
 async def rsvp_to_event(event_id: str, current_user: User = Depends(get_current_user)):
     """RSVP to an event"""
-    event = await db.events.find_one({"id": event_id, "is_active": True})
-    if not event:
+    events_ref = db.collection('events')
+    event_query = events_ref.where('id', '==', event_id).where('is_active', '==', True).limit(1)
+    event_docs = list(event_query.stream())
+    
+    if not event_docs:
         raise HTTPException(status_code=404, detail="Event not found")
     
     # Check if already RSVPd
-    existing = await db.rsvps.find_one({
-        "event_id": event_id,
-        "user_id": current_user.id
-    })
-    if existing:
+    rsvps_ref = db.collection('rsvps')
+    existing_query = rsvps_ref.where('event_id', '==', event_id).where('user_id', '==', current_user.id).limit(1)
+    existing_docs = list(existing_query.stream())
+    
+    if existing_docs:
         raise HTTPException(status_code=400, detail="Already RSVPd to this event")
     
     # Get user display name
@@ -857,53 +998,70 @@ async def rsvp_to_event(event_id: str, current_user: User = Depends(get_current_
         user_email=current_user.email,
         user_name=display_name
     )
-    await db.rsvps.insert_one(rsvp.dict())
+    db.collection('rsvps').document(rsvp.id).set(
+        serialize_for_firestore(rsvp.model_dump())
+    )
     
     # Increment RSVP count
-    await db.events.update_one(
-        {"id": event_id},
-        {"$inc": {"rsvp_count": 1}}
-    )
+    event_doc = event_docs[0]
+    current_count = event_doc.to_dict().get('rsvp_count', 0)
+    db.collection('events').document(event_doc.id).update({'rsvp_count': current_count + 1})
     
     return rsvp
 
 @api_router.delete("/events/{event_id}/rsvp", response_model=MessageResponse)
 async def cancel_rsvp(event_id: str, current_user: User = Depends(get_current_user)):
     """Cancel RSVP to an event"""
-    result = await db.rsvps.delete_one({
-        "event_id": event_id,
-        "user_id": current_user.id
-    })
+    rsvps_ref = db.collection('rsvps')
+    query = rsvps_ref.where('event_id', '==', event_id).where('user_id', '==', current_user.id).limit(1)
+    docs = list(query.stream())
     
-    if result.deleted_count == 0:
+    if not docs:
         raise HTTPException(status_code=404, detail="RSVP not found")
     
+    # Delete RSVP
+    docs[0].reference.delete()
+    
     # Decrement RSVP count
-    await db.events.update_one(
-        {"id": event_id},
-        {"$inc": {"rsvp_count": -1}}
-    )
+    events_ref = db.collection('events')
+    event_query = events_ref.where('id', '==', event_id).limit(1)
+    event_docs = list(event_query.stream())
+    if event_docs:
+        current_count = event_docs[0].to_dict().get('rsvp_count', 0)
+        db.collection('events').document(event_docs[0].id).update({'rsvp_count': max(0, current_count - 1)})
     
     return MessageResponse(message="RSVP cancelled")
 
 @api_router.get("/events/{event_id}/rsvps", response_model=List[RSVP])
 async def get_event_rsvps(event_id: str):
     """Get all RSVPs for an event"""
-    rsvps = await db.rsvps.find({"event_id": event_id}).to_list(1000)
-    return [RSVP(**rsvp) for rsvp in rsvps]
+    rsvps_ref = db.collection('rsvps')
+    query = rsvps_ref.where('event_id', '==', event_id)
+    docs = query.stream()
+    
+    return [RSVP(**deserialize_from_firestore(doc.to_dict())) for doc in docs]
 
 @api_router.get("/users/me/rsvps", response_model=List[dict])
 async def get_my_rsvps(current_user: User = Depends(get_current_user)):
     """Get all RSVPs for current user with event details"""
-    rsvps = await db.rsvps.find({"user_id": current_user.id}).to_list(1000)
+    rsvps_ref = db.collection('rsvps')
+    query = rsvps_ref.where('user_id', '==', current_user.id)
+    rsvp_docs = query.stream()
     
     result = []
-    for rsvp in rsvps:
-        event = await db.events.find_one({"id": rsvp['event_id']})
-        if event:
+    for rsvp_doc in rsvp_docs:
+        rsvp_dict = deserialize_from_firestore(rsvp_doc.to_dict())
+        
+        # Get event
+        events_ref = db.collection('events')
+        event_query = events_ref.where('id', '==', rsvp_dict['event_id']).limit(1)
+        event_docs = list(event_query.stream())
+        
+        if event_docs:
+            event_dict = deserialize_from_firestore(event_docs[0].to_dict())
             result.append({
-                "rsvp": RSVP(**rsvp).dict(),
-                "event": Event(**event).dict()
+                "rsvp": RSVP(**rsvp_dict).model_dump(),
+                "event": Event(**event_dict).model_dump()
             })
     
     return result
@@ -912,11 +1070,11 @@ async def get_my_rsvps(current_user: User = Depends(get_current_user)):
 
 @api_router.get("/")
 async def root():
-    return {"message": "Mutual Aid API is running"}
+    return {"message": "Mutual Aid API is running", "database": "Firebase Firestore"}
 
 @api_router.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat(), "database": "Firebase Firestore"}
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -937,8 +1095,11 @@ async def startup_event():
     admin_email = "theredthreadapp@gmail.com"
     admin_password = "1234"
     
-    existing_admin = await db.users.find_one({"email": admin_email})
-    if not existing_admin:
+    users_ref = db.collection('users')
+    existing_query = users_ref.where('email', '==', admin_email).limit(1)
+    existing_docs = list(existing_query.stream())
+    
+    if not existing_docs:
         admin_user = User(
             email=admin_email,
             password_hash=hash_password(admin_password),
@@ -950,11 +1111,9 @@ async def startup_event():
                 display_name="Admin"
             )
         )
-        await db.users.insert_one(admin_user.dict())
+        db.collection('users').document(admin_user.id).set(
+            serialize_for_firestore(admin_user.model_dump())
+        )
         logger.info("Admin account created: %s", admin_email)
     else:
         logger.info("Admin account already exists: %s", admin_email)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
