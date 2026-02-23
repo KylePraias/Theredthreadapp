@@ -30,8 +30,10 @@ export default function SettingsScreen() {
         text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
-          await logout();
+          // Navigate first, then logout to avoid UI showing null user state
+          router.dismissAll();
           router.replace('/');
+          await logout();
         },
       },
     ]);

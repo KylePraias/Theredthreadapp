@@ -55,12 +55,15 @@ export default function AdminDashboardScreen() {
   }, []);
 
   useEffect(() => {
-    if (user?.user_type !== 'admin') {
-      router.replace('/');
-      return;
-    }
-    fetchData();
-  }, [user, fetchData]);
+  if (user?.user_type !== 'admin') {
+    // Defer navigation until after the navigator is ready
+    const timeout = setTimeout(() => {
+      router.replace('/(tabs)');
+    }, 0);
+    return () => clearTimeout(timeout);
+  }
+  fetchData();
+}, [user, fetchData]);
 
   const onRefresh = () => {
     setRefreshing(true);

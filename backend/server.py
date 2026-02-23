@@ -23,6 +23,7 @@ import re
 # Firebase imports
 import firebase_admin
 from firebase_admin import credentials, firestore, auth as firebase_auth
+from google.cloud.firestore_v1.base_query import FieldFilter
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -303,7 +304,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     
     # Query Firestore for user
     users_ref = db.collection('users')
-    query = users_ref.where('id', '==', user_id).limit(1)
+    query = users_ref.where(filter=FieldFilter('id', '==', user_id)).limit(1)
     docs = query.stream()
     user_dict = None
     for doc in docs:
@@ -348,7 +349,7 @@ async def verify_email_complete(token: str, email: str):
     """Handle email verification link click"""
     try:
         tokens_ref = db.collection('email_verification_tokens')
-        query = tokens_ref.where('email', '==', email).where('token', '==', token).where('used', '==', False).limit(1)
+        query = tokens_ref.where(filter=FieldFilter('email', '==', email)).where(filter=FieldFilter('token', '==', token)).where(filter=FieldFilter('used', '==', False)).limit(1)
         token_docs = list(query.stream())
 
         if not token_docs:
@@ -366,7 +367,7 @@ async def verify_email_complete(token: str, email: str):
 
         # Mark user as verified
         users_ref = db.collection('users')
-        user_query = users_ref.where('email', '==', email).limit(1)
+        user_query = users_ref.where(filter=FieldFilter('email', '==', email)).limit(1)
         user_docs = list(user_query.stream())
         if user_docs:
             db.collection('users').document(user_docs[0].id).update({'is_verified': True})
@@ -408,7 +409,7 @@ async def send_verification_email(email: str, continue_url: str = None):
             'used': False
         })
 
-        verification_link = f"http://192.168.2.27:8001/api/auth/verify-email-complete?token={verification_token}&email={email}"
+        verification_link = f"http://10.117.9.98:8001/api/auth/verify-email-complete?token={verification_token}&email={email}"
         
         # Send email via Gmail SMTP
         import smtplib
@@ -491,7 +492,7 @@ async def register_individual(data: IndividualRegister):
     
     # Check if email exists
     users_ref = db.collection('users')
-    existing_query = users_ref.where('email', '==', data.email).limit(1)
+    existing_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
     existing_docs = list(existing_query.stream())
     if existing_docs:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -545,7 +546,7 @@ async def register_organization(data: OrganizationRegister):
     
     # Check if email exists
     users_ref = db.collection('users')
-    existing_query = users_ref.where('email', '==', data.email).limit(1)
+    existing_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
     existing_docs = list(existing_query.stream())
     if existing_docs:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -600,7 +601,7 @@ async def verify_email(data: VerifyEmailRequest):
         try:
             # Find the verification token
             tokens_ref = db.collection('email_verification_tokens')
-            query = tokens_ref.where('email', '==', data.email).where('token', '==', data.token).where('used', '==', False).limit(1)
+            query = tokens_ref.where(filter=FieldFilter('email', '==', data.email)).where(filter=FieldFilter('token', '==', data.token)).where(filter=FieldFilter('used', '==', False)).limit(1)
             token_docs = list(query.stream())
             
             if not token_docs:
@@ -627,7 +628,7 @@ async def verify_email(data: VerifyEmailRequest):
             
             # Find and update user in Firestore as verified
             users_ref = db.collection('users')
-            user_query = users_ref.where('email', '==', data.email).limit(1)
+            user_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
             user_docs = list(user_query.stream())
             
             if not user_docs:
@@ -678,7 +679,7 @@ async def verify_email(data: VerifyEmailRequest):
             
             # Find user in Firestore and mark as verified
             users_ref = db.collection('users')
-            user_query = users_ref.where('email', '==', data.email).limit(1)
+            user_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
             user_docs = list(user_query.stream())
             
             if not user_docs:
@@ -717,7 +718,7 @@ async def verify_email(data: VerifyEmailRequest):
 async def resend_verification(data: ResendVerificationRequest):
     """Resend verification link"""
     users_ref = db.collection('users')
-    user_query = users_ref.where('email', '==', data.email).limit(1)
+    user_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
     user_docs = list(user_query.stream())
     
     if not user_docs:
@@ -748,7 +749,7 @@ class CheckVerificationResponse(BaseModel):
 async def check_verification_status(data: CheckVerificationRequest):
     """Check if an email has been verified (for polling during signup)"""
     users_ref = db.collection('users')
-    user_query = users_ref.where('email', '==', data.email).limit(1)
+    user_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
     user_docs = list(user_query.stream())
     
     if not user_docs:
@@ -761,7 +762,7 @@ async def check_verification_status(data: CheckVerificationRequest):
 async def login(data: LoginRequest):
     """Login with email and password"""
     users_ref = db.collection('users')
-    user_query = users_ref.where('email', '==', data.email).limit(1)
+    user_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
     user_docs = list(user_query.stream())
     
     if not user_docs:
@@ -796,7 +797,7 @@ async def google_sign_in_individual(data: GoogleSignIn):
     users_ref = db.collection('users')
     
     # Check by firebase_uid first
-    uid_query = users_ref.where('firebase_uid', '==', data.firebase_uid).limit(1)
+    uid_query = users_ref.where(filter=FieldFilter('firebase_uid', '==', data.firebase_uid)).limit(1)
     uid_docs = list(uid_query.stream())
     
     if uid_docs:
@@ -804,7 +805,7 @@ async def google_sign_in_individual(data: GoogleSignIn):
         user = User(**user_dict)
     else:
         # Check by email
-        email_query = users_ref.where('email', '==', data.email).limit(1)
+        email_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
         email_docs = list(email_query.stream())
         
         if email_docs:
@@ -847,7 +848,7 @@ async def google_sign_in_organization(data: GoogleOrgSignIn):
     users_ref = db.collection('users')
     
     # Check by firebase_uid first
-    uid_query = users_ref.where('firebase_uid', '==', data.firebase_uid).limit(1)
+    uid_query = users_ref.where(filter=FieldFilter('firebase_uid', '==', data.firebase_uid)).limit(1)
     uid_docs = list(uid_query.stream())
     
     if uid_docs:
@@ -855,7 +856,7 @@ async def google_sign_in_organization(data: GoogleOrgSignIn):
         user = User(**user_dict)
     else:
         # Check by email
-        email_query = users_ref.where('email', '==', data.email).limit(1)
+        email_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
         email_docs = list(email_query.stream())
         
         if email_docs:
@@ -906,7 +907,7 @@ async def change_password(data: ChangePasswordRequest, current_user: User = Depe
     
     # Find user document and update
     users_ref = db.collection('users')
-    user_query = users_ref.where('id', '==', current_user.id).limit(1)
+    user_query = users_ref.where(filter=FieldFilter('id', '==', current_user.id)).limit(1)
     user_docs = list(user_query.stream())
     if user_docs:
         db.collection('users').document(user_docs[0].id).update({'password_hash': new_hash})
@@ -930,7 +931,7 @@ async def update_individual_profile(
         raise HTTPException(status_code=400, detail="Not an individual account")
     
     users_ref = db.collection('users')
-    user_query = users_ref.where('id', '==', current_user.id).limit(1)
+    user_query = users_ref.where(filter=FieldFilter('id', '==', current_user.id)).limit(1)
     user_docs = list(user_query.stream())
     if user_docs:
         db.collection('users').document(user_docs[0].id).update({
@@ -952,7 +953,7 @@ async def update_organization_profile(
         raise HTTPException(status_code=400, detail="Not an organization account")
     
     users_ref = db.collection('users')
-    user_query = users_ref.where('id', '==', current_user.id).limit(1)
+    user_query = users_ref.where(filter=FieldFilter('id', '==', current_user.id)).limit(1)
     user_docs = list(user_query.stream())
     if user_docs:
         db.collection('users').document(user_docs[0].id).update({
@@ -970,7 +971,7 @@ async def update_organization_profile(
 async def get_pending_organizations(admin: User = Depends(get_admin_user)):
     """Get all pending organization approvals"""
     users_ref = db.collection('users')
-    query = users_ref.where('user_type', '==', 'organization').where('approval_status', '==', 'pending').where('is_verified', '==', True)
+    query = users_ref.where(filter=FieldFilter('user_type', '==', 'organization')).where(filter=FieldFilter('approval_status', '==', 'pending')).where(filter=FieldFilter('is_verified', '==', True))
     docs = query.stream()
     
     return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
@@ -979,7 +980,7 @@ async def get_pending_organizations(admin: User = Depends(get_admin_user)):
 async def approve_organization(org_id: str, admin: User = Depends(get_admin_user)):
     """Approve an organization"""
     users_ref = db.collection('users')
-    query = users_ref.where('id', '==', org_id).where('user_type', '==', 'organization').limit(1)
+    query = users_ref.where(filter=FieldFilter('id', '==', org_id)).where(filter=FieldFilter('user_type', '==', 'organization')).limit(1)
     docs = list(query.stream())
     
     if not docs:
@@ -994,7 +995,7 @@ async def approve_organization(org_id: str, admin: User = Depends(get_admin_user
 async def reject_organization(org_id: str, admin: User = Depends(get_admin_user)):
     """Reject an organization"""
     users_ref = db.collection('users')
-    query = users_ref.where('id', '==', org_id).where('user_type', '==', 'organization').limit(1)
+    query = users_ref.where(filter=FieldFilter('id', '==', org_id)).where(filter=FieldFilter('user_type', '==', 'organization')).limit(1)
     docs = list(query.stream())
     
     if not docs:
@@ -1009,7 +1010,7 @@ async def reject_organization(org_id: str, admin: User = Depends(get_admin_user)
 async def get_all_organizations(admin: User = Depends(get_admin_user)):
     """Get all organizations"""
     users_ref = db.collection('users')
-    query = users_ref.where('user_type', '==', 'organization')
+    query = users_ref.where(filter=FieldFilter('user_type', '==', 'organization'))
     docs = query.stream()
     
     return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
@@ -1045,7 +1046,7 @@ async def get_events(
     # We'll filter and sort in Python instead of Firestore
     if active_only:
         # Simple query with just the is_active filter
-        query = events_ref.where('is_active', '==', True)
+        query = events_ref.where(filter=FieldFilter('is_active', '==', True))
     else:
         # Get all events
         query = events_ref
@@ -1085,7 +1086,7 @@ async def get_events(
 async def get_event(event_id: str):
     """Get a specific event"""
     events_ref = db.collection('events')
-    query = events_ref.where('id', '==', event_id).limit(1)
+    query = events_ref.where(filter=FieldFilter('id', '==', event_id)).limit(1)
     docs = list(query.stream())
     
     if not docs:
@@ -1101,7 +1102,7 @@ async def update_event(
 ):
     """Update an event (owner organization only)"""
     events_ref = db.collection('events')
-    query = events_ref.where('id', '==', event_id).limit(1)
+    query = events_ref.where(filter=FieldFilter('id', '==', event_id)).limit(1)
     docs = list(query.stream())
     
     if not docs:
@@ -1130,7 +1131,7 @@ async def delete_event(
 ):
     """Delete an event (owner organization only)"""
     events_ref = db.collection('events')
-    query = events_ref.where('id', '==', event_id).limit(1)
+    query = events_ref.where(filter=FieldFilter('id', '==', event_id)).limit(1)
     docs = list(query.stream())
     
     if not docs:
@@ -1145,7 +1146,7 @@ async def delete_event(
     
     # Delete associated RSVPs
     rsvps_ref = db.collection('rsvps')
-    rsvp_query = rsvps_ref.where('event_id', '==', event_id)
+    rsvp_query = rsvps_ref.where(filter=FieldFilter('event_id', '==', event_id))
     rsvp_docs = rsvp_query.stream()
     for rsvp_doc in rsvp_docs:
         rsvp_doc.reference.delete()
@@ -1156,7 +1157,7 @@ async def delete_event(
 async def get_organization_events(org_id: str):
     """Get all events by an organization"""
     events_ref = db.collection('events')
-    query = events_ref.where('organization_id', '==', org_id).order_by('date')
+    query = events_ref.where(filter=FieldFilter('organization_id', '==', org_id)).order_by('date')
     docs = query.stream()
     
     return [Event(**deserialize_from_firestore(doc.to_dict())) for doc in docs]
@@ -1167,7 +1168,7 @@ async def get_organization_events(org_id: str):
 async def rsvp_to_event(event_id: str, current_user: User = Depends(get_current_user)):
     """RSVP to an event"""
     events_ref = db.collection('events')
-    event_query = events_ref.where('id', '==', event_id).where('is_active', '==', True).limit(1)
+    event_query = events_ref.where(filter=FieldFilter('id', '==', event_id)).where(filter=FieldFilter('is_active', '==', True)).limit(1)
     event_docs = list(event_query.stream())
     
     if not event_docs:
@@ -1175,7 +1176,7 @@ async def rsvp_to_event(event_id: str, current_user: User = Depends(get_current_
     
     # Check if already RSVPd
     rsvps_ref = db.collection('rsvps')
-    existing_query = rsvps_ref.where('event_id', '==', event_id).where('user_id', '==', current_user.id).limit(1)
+    existing_query = rsvps_ref.where(filter=FieldFilter('event_id', '==', event_id)).where(filter=FieldFilter('user_id', '==', current_user.id)).limit(1)
     existing_docs = list(existing_query.stream())
     
     if existing_docs:
@@ -1209,7 +1210,7 @@ async def rsvp_to_event(event_id: str, current_user: User = Depends(get_current_
 async def cancel_rsvp(event_id: str, current_user: User = Depends(get_current_user)):
     """Cancel RSVP to an event"""
     rsvps_ref = db.collection('rsvps')
-    query = rsvps_ref.where('event_id', '==', event_id).where('user_id', '==', current_user.id).limit(1)
+    query = rsvps_ref.where(filter=FieldFilter('event_id', '==', event_id)).where(filter=FieldFilter('user_id', '==', current_user.id)).limit(1)
     docs = list(query.stream())
     
     if not docs:
@@ -1220,7 +1221,7 @@ async def cancel_rsvp(event_id: str, current_user: User = Depends(get_current_us
     
     # Decrement RSVP count
     events_ref = db.collection('events')
-    event_query = events_ref.where('id', '==', event_id).limit(1)
+    event_query = events_ref.where(filter=FieldFilter('id', '==', event_id)).limit(1)
     event_docs = list(event_query.stream())
     if event_docs:
         current_count = event_docs[0].to_dict().get('rsvp_count', 0)
@@ -1232,7 +1233,7 @@ async def cancel_rsvp(event_id: str, current_user: User = Depends(get_current_us
 async def get_event_rsvps(event_id: str):
     """Get all RSVPs for an event"""
     rsvps_ref = db.collection('rsvps')
-    query = rsvps_ref.where('event_id', '==', event_id)
+    query = rsvps_ref.where(filter=FieldFilter('event_id', '==', event_id))
     docs = query.stream()
     
     return [RSVP(**deserialize_from_firestore(doc.to_dict())) for doc in docs]
@@ -1241,7 +1242,7 @@ async def get_event_rsvps(event_id: str):
 async def get_my_rsvps(current_user: User = Depends(get_current_user)):
     """Get all RSVPs for current user with event details"""
     rsvps_ref = db.collection('rsvps')
-    query = rsvps_ref.where('user_id', '==', current_user.id)
+    query = rsvps_ref.where(filter=FieldFilter('user_id', '==', current_user.id))
     rsvp_docs = query.stream()
     
     result = []
@@ -1250,7 +1251,7 @@ async def get_my_rsvps(current_user: User = Depends(get_current_user)):
         
         # Get event
         events_ref = db.collection('events')
-        event_query = events_ref.where('id', '==', rsvp_dict['event_id']).limit(1)
+        event_query = events_ref.where(filter=FieldFilter('id', '==', rsvp_dict['event_id'])).limit(1)
         event_docs = list(event_query.stream())
         
         if event_docs:
@@ -1282,34 +1283,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ============== STARTUP: Seed Admin Account ==============
-
-@app.on_event("startup")
-async def startup_event():
-    """Create admin account on startup if it doesn't exist"""
-    admin_email = "theredthreadapp@gmail.com"
-    admin_password = "1234"
-    
-    users_ref = db.collection('users')
-    existing_query = users_ref.where('email', '==', admin_email).limit(1)
-    existing_docs = list(existing_query.stream())
-    
-    if not existing_docs:
-        admin_user = User(
-            email=admin_email,
-            password_hash=hash_password(admin_password),
-            user_type="admin",
-            auth_provider="email",
-            is_verified=True,
-            approval_status="approved",
-            individual_profile=IndividualProfile(
-                display_name="Admin"
-            )
-        )
-        db.collection('users').document(admin_user.id).set(
-            serialize_for_firestore(admin_user.model_dump())
-        )
-        logger.info("Admin account created: %s", admin_email)
-    else:
-        logger.info("Admin account already exists: %s", admin_email)

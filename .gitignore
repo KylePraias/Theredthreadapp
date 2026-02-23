@@ -67,3 +67,5 @@ android-sdk/
 
 # Metro cache
 frontend/.metro-cache/*
+
+backend/firebase-admin.json
