@@ -409,7 +409,7 @@ async def send_verification_email(email: str, continue_url: str = None):
             'used': False
         })
 
-        verification_link = f"http://10.117.9.98:8001/api/auth/verify-email-complete?token={verification_token}&email={email}"
+        verification_link = f"http://192.168.68.101:8001/api/auth/verify-email-complete?token={verification_token}&email={email}"
         
         # Send email via Gmail SMTP
         import smtplib

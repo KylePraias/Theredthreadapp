@@ -11,11 +11,9 @@ export default function WelcomeScreen() {
   const hasRedirected = useRef(false);
 
   useEffect(() => {
-    // Only auto-redirect once on initial app load if user is logged in
-    // After that, don't redirect (allows logout to stay on this screen)
-    if (isInitialized && user && !hasRedirected.current) {
-      hasRedirected.current = true;
-      // Route based on user type and status
+  if (isInitialized && user && !hasRedirected.current) {
+    hasRedirected.current = true;
+    const timeout = setTimeout(() => {
       if (user.user_type === 'organization' && user.approval_status === 'pending') {
         router.replace('/(auth)/pending-approval');
       } else if (user.user_type === 'organization' && user.approval_status === 'rejected') {
@@ -23,8 +21,10 @@ export default function WelcomeScreen() {
       } else {
         router.replace('/(tabs)');
       }
-    }
-  }, [user, isInitialized]);
+    }, 0);
+    return () => clearTimeout(timeout);
+  }
+}, [user, isInitialized]);
 
   return (
     <View style={styles.container}>
