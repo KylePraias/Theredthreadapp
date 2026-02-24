@@ -1,17 +1,20 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthStore } from '../src/store/authStore';
 import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
 
 export default function WelcomeScreen() {
   const router = useRouter();
-  const { user, isInitialized } = useAuthStore();
+  const { user, isInitialized, isLoggingOut } = useAuthStore();
   const hasRedirected = useRef(false);
 
   useEffect(() => {
-  if (isInitialized && user && !hasRedirected.current) {
+  if (!user) {
+    hasRedirected.current = false;
+    return;
+  }
+  if (isInitialized && user && !hasRedirected.current && !isLoggingOut) {
     hasRedirected.current = true;
     const timeout = setTimeout(() => {
       if (user.user_type === 'organization' && user.approval_status === 'pending') {
@@ -21,10 +24,10 @@ export default function WelcomeScreen() {
       } else {
         router.replace('/(tabs)');
       }
-    }, 0);
+    }, 200);
     return () => clearTimeout(timeout);
   }
-}, [user, isInitialized]);
+}, [user, isInitialized, isLoggingOut]);
 
   return (
     <View style={styles.container}>

@@ -22,7 +22,7 @@ export interface OrganizationProfile {
 export interface User {
   id: string;
   email: string;
-  user_type: 'individual' | 'organization' | 'admin';
+  user_type: 'individual' | 'organization' | 'admin' | 'developer';
   is_verified: boolean;
   is_active: boolean;
   approval_status: 'pending' | 'approved' | 'rejected';
@@ -37,6 +37,7 @@ interface AuthState {
   token: string | null;
   isLoading: boolean;
   isInitialized: boolean;
+  isLoggingOut: boolean;
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
   login: (token: string, user: User) => Promise<void>;
@@ -50,21 +51,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   token: null,
   isLoading: true,
   isInitialized: false,
+  isLoggingOut: false,
 
   setUser: (user) => set({ user }),
   setToken: (token) => set({ token }),
 
   login: async (token, user) => {
     await storage.setItem('auth_token', token);
-    set({ token, user, isLoading: false });
+    set({ token, user, isLoading: false, isLoggingOut: false });
   },
 
-  logout: async () => {
-    await storage.deleteItem('auth_token');
-    set({ token: null, user: null });
-  },
+ logout: async () => {
+  set({ isLoggingOut: true });
+  await storage.deleteItem('auth_token');
+  set({ token: null, user: null });
+},
 
   initialize: async () => {
+    set({ isLoggingOut: false });
     try {
       const token = await storage.getItem('auth_token');
       if (token) {

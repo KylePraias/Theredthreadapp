@@ -8,36 +8,50 @@ import {
   Alert,
   TextInput,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { authApi } from '../../src/api/auth';
+import { InlineRoleBadge } from '../../src/components/RoleBadge';
 
 export default function SettingsScreen() {
   const router = useRouter();
   const { user, logout, refreshUser } = useAuthStore();
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+
+  // Individual profile fields
+  const [displayName, setDisplayName] = useState(user?.individual_profile?.display_name || '');
+  const [bio, setBio] = useState(user?.individual_profile?.bio || '');
+
+  // Organization profile fields
+  const [orgDescription, setOrgDescription] = useState(user?.organization_profile?.description || '');
+  const [orgWebsite, setOrgWebsite] = useState(user?.organization_profile?.website || '');
+  const [orgContactEmail, setOrgContactEmail] = useState(user?.organization_profile?.contact_email || '');
+  const [orgAreasOfFocus, setOrgAreasOfFocus] = useState(
+    user?.organization_profile?.areas_of_focus?.join(', ') || ''
+  );
 
   const handleLogout = async () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: async () => {
-          // Navigate first, then logout to avoid UI showing null user state
-          router.dismissAll();
-          router.replace('/');
-          await logout();
-        },
+  Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+    { text: 'Cancel', style: 'cancel' },
+    {
+      text: 'Sign Out',
+      style: 'destructive',
+      onPress: async () => {
+        await logout();
       },
-    ]);
-  };
+    },
+  ]);
+};
 
   const handleChangePassword = async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
@@ -50,11 +64,10 @@ export default function SettingsScreen() {
       return;
     }
 
-    // Password validation
     const hasMinLength = newPassword.length >= 8;
     const hasNumber = /\d/.test(newPassword);
     const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(newPassword);
-    
+
     if (!hasMinLength || !hasNumber || !hasSpecialChar) {
       Alert.alert('Error', 'Password must be at least 8 characters with a number and special character');
       return;
@@ -76,6 +89,39 @@ export default function SettingsScreen() {
     }
   };
 
+  const handleUpdateProfile = async () => {
+    setIsUpdatingProfile(true);
+    try {
+      if (user?.user_type === 'organization') {
+        const areasArray = orgAreasOfFocus
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+
+        await authApi.updateOrganizationProfile({
+          description: orgDescription,
+          website: orgWebsite || undefined,
+          contact_email: orgContactEmail,
+          areas_of_focus: areasArray,
+        });
+      } else {
+        await authApi.updateIndividualProfile({
+          display_name: displayName,
+          bio: bio || undefined,
+        });
+      }
+
+      await refreshUser();
+      Alert.alert('Success', 'Profile updated successfully');
+      setShowProfileEdit(false);
+    } catch (error: any) {
+      const message = error.response?.data?.detail || 'Failed to update profile';
+      Alert.alert('Error', message);
+    } finally {
+      setIsUpdatingProfile(false);
+    }
+  };
+
   const getDisplayName = () => {
     if (user?.individual_profile) {
       return user.individual_profile.display_name;
@@ -88,6 +134,8 @@ export default function SettingsScreen() {
 
   const getUserTypeLabel = () => {
     switch (user?.user_type) {
+      case 'developer':
+        return 'Developer';
       case 'admin':
         return 'Administrator';
       case 'organization':
@@ -97,145 +145,279 @@ export default function SettingsScreen() {
     }
   };
 
+  const getUserTypeColor = () => {
+    switch (user?.user_type) {
+      case 'developer':
+        return '#ff5722';
+      case 'admin':
+        return '#9c27b0';
+      case 'organization':
+        return '#2196f3';
+      default:
+        return '#d32f2f';
+    }
+  };
+
+  const isIndividualLike = user?.user_type === 'individual' || user?.user_type === 'admin' || user?.user_type === 'developer';
+
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.profileSection}>
-        <View style={styles.avatarContainer}>
-          <View style={styles.avatar}>
-            <Ionicons
-              name={user?.user_type === 'organization' ? 'people' : 'person'}
-              size={40}
-              color="#d32f2f"
-            />
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
+        <View style={styles.profileSection}>
+          <View style={styles.avatarContainer}>
+            <View style={styles.avatar}>
+              <Ionicons
+                name={user?.user_type === 'organization' ? 'people' : 'person'}
+                size={40}
+                color={getUserTypeColor()}
+              />
+            </View>
+          </View>
+          <View style={styles.nameContainer}>
+            <Text style={styles.displayName}>{getDisplayName()}</Text>
+            <InlineRoleBadge userType={user?.user_type || 'individual'} size={20} />
+          </View>
+          <Text style={styles.email}>{user?.email}</Text>
+          <View style={[styles.badge, { backgroundColor: `${getUserTypeColor()}20` }]}>
+            <Text style={[styles.badgeText, { color: getUserTypeColor() }]}>{getUserTypeLabel()}</Text>
           </View>
         </View>
-        <Text style={styles.displayName}>{getDisplayName()}</Text>
-        <Text style={styles.email}>{user?.email}</Text>
-        <View style={styles.badge}>
-          <Text style={styles.badgeText}>{getUserTypeLabel()}</Text>
-        </View>
-      </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Profile</Text>
 
-        {user?.auth_provider === 'email' && (
           <TouchableOpacity
             style={styles.menuItem}
-            onPress={() => setShowPasswordChange(!showPasswordChange)}
+            onPress={() => setShowProfileEdit(!showProfileEdit)}
           >
             <View style={styles.menuItemLeft}>
-              <Ionicons name="lock-closed-outline" size={24} color="#888" />
-              <Text style={styles.menuItemText}>Change Password</Text>
+              <Ionicons name="person-outline" size={24} color="#888" />
+              <Text style={styles.menuItemText}>Edit Profile</Text>
             </View>
             <Ionicons
-              name={showPasswordChange ? 'chevron-up' : 'chevron-down'}
+              name={showProfileEdit ? 'chevron-up' : 'chevron-down'}
               size={20}
               color="#888"
             />
           </TouchableOpacity>
-        )}
 
-        {showPasswordChange && (
-          <View style={styles.passwordChangeContainer}>
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="Current Password"
-              placeholderTextColor="#666"
-              value={currentPassword}
-              onChangeText={setCurrentPassword}
-              secureTextEntry
-            />
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="New Password"
-              placeholderTextColor="#666"
-              value={newPassword}
-              onChangeText={setNewPassword}
-              secureTextEntry
-            />
-            <TextInput
-              style={styles.passwordInput}
-              placeholder="Confirm New Password"
-              placeholderTextColor="#666"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-            />
-            <TouchableOpacity
-              style={styles.changePasswordButton}
-              onPress={handleChangePassword}
-              disabled={isChangingPassword}
-            >
-              {isChangingPassword ? (
-                <ActivityIndicator color="#fff" />
+          {showProfileEdit && (
+            <View style={styles.editContainer}>
+              {isIndividualLike ? (
+                <>
+                  <Text style={styles.inputLabel}>Display Name</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Your display name"
+                    placeholderTextColor="#666"
+                    value={displayName}
+                    onChangeText={setDisplayName}
+                  />
+                  <Text style={styles.inputLabel}>Bio</Text>
+                  <TextInput
+                    style={[styles.input, styles.textArea]}
+                    placeholder="Tell us about yourself"
+                    placeholderTextColor="#666"
+                    value={bio}
+                    onChangeText={setBio}
+                    multiline
+                    numberOfLines={4}
+                  />
+                </>
               ) : (
-                <Text style={styles.changePasswordButtonText}>Update Password</Text>
+                <>
+                  <Text style={styles.inputLabel}>Description</Text>
+                  <TextInput
+                    style={[styles.input, styles.textArea]}
+                    placeholder="Organization description"
+                    placeholderTextColor="#666"
+                    value={orgDescription}
+                    onChangeText={setOrgDescription}
+                    multiline
+                    numberOfLines={4}
+                  />
+                  <Text style={styles.inputLabel}>Website</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="https://example.com"
+                    placeholderTextColor="#666"
+                    value={orgWebsite}
+                    onChangeText={setOrgWebsite}
+                    keyboardType="url"
+                    autoCapitalize="none"
+                  />
+                  <Text style={styles.inputLabel}>Public Contact Email</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="contact@organization.com"
+                    placeholderTextColor="#666"
+                    value={orgContactEmail}
+                    onChangeText={setOrgContactEmail}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                  />
+                  <Text style={styles.inputLabel}>Areas of Focus (comma-separated)</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Education, Health, Environment"
+                    placeholderTextColor="#666"
+                    value={orgAreasOfFocus}
+                    onChangeText={setOrgAreasOfFocus}
+                  />
+                </>
               )}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {user?.user_type === 'admin' && (
-          <TouchableOpacity
-            style={styles.menuItem}
-            onPress={() => router.push('/admin')}
-          >
-            <View style={styles.menuItemLeft}>
-              <Ionicons name="shield-checkmark-outline" size={24} color="#888" />
-              <Text style={styles.menuItemText}>Admin Dashboard</Text>
+              <TouchableOpacity
+                style={styles.saveButton}
+                onPress={handleUpdateProfile}
+                disabled={isUpdatingProfile}
+              >
+                {isUpdatingProfile ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save Changes</Text>
+                )}
+              </TouchableOpacity>
             </View>
-            <Ionicons name="chevron-forward" size={20} color="#888" />
-          </TouchableOpacity>
-        )}
-      </View>
+          )}
+        </View>
 
-      {user?.organization_profile && (
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Organization Info</Text>
-          <View style={styles.infoCard}>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Name</Text>
-              <Text style={styles.infoValue}>{user.organization_profile.name}</Text>
-            </View>
-            <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Contact</Text>
-              <Text style={styles.infoValue}>{user.organization_profile.contact_email}</Text>
-            </View>
-            {user.organization_profile.website && (
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Website</Text>
-                <Text style={styles.infoValue}>{user.organization_profile.website}</Text>
+          <Text style={styles.sectionTitle}>Account</Text>
+
+          {user?.auth_provider === 'email' && (
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => setShowPasswordChange(!showPasswordChange)}
+            >
+              <View style={styles.menuItemLeft}>
+                <Ionicons name="lock-closed-outline" size={24} color="#888" />
+                <Text style={styles.menuItemText}>Change Password</Text>
               </View>
-            )}
-            {user.organization_profile.areas_of_focus && user.organization_profile.areas_of_focus.length > 0 && (
-              <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Focus Areas</Text>
-                <Text style={styles.infoValue}>
-                  {user.organization_profile.areas_of_focus.join(', ')}
-                </Text>
+              <Ionicons
+                name={showPasswordChange ? 'chevron-up' : 'chevron-down'}
+                size={20}
+                color="#888"
+              />
+            </TouchableOpacity>
+          )}
+
+          {showPasswordChange && (
+            <View style={styles.passwordChangeContainer}>
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Current Password"
+                placeholderTextColor="#666"
+                value={currentPassword}
+                onChangeText={setCurrentPassword}
+                secureTextEntry
+              />
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="New Password"
+                placeholderTextColor="#666"
+                value={newPassword}
+                onChangeText={setNewPassword}
+                secureTextEntry
+              />
+              <TextInput
+                style={styles.passwordInput}
+                placeholder="Confirm New Password"
+                placeholderTextColor="#666"
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry
+              />
+              <TouchableOpacity
+                style={styles.changePasswordButton}
+                onPress={handleChangePassword}
+                disabled={isChangingPassword}
+              >
+                {isChangingPassword ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.changePasswordButtonText}>Update Password</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {(user?.user_type === 'admin' || user?.user_type === 'developer') && (
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => router.push('/admin')}
+            >
+              <View style={styles.menuItemLeft}>
+                <Ionicons name="shield-checkmark-outline" size={24} color="#9c27b0" />
+                <Text style={styles.menuItemText}>Admin Dashboard</Text>
               </View>
-            )}
+              <Ionicons name="chevron-forward" size={20} color="#888" />
+            </TouchableOpacity>
+          )}
+
+          {user?.user_type === 'developer' && (
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={() => router.push('/developer' as any)}
+            >
+              <View style={styles.menuItemLeft}>
+                <Ionicons name="code-slash-outline" size={24} color="#ff5722" />
+                <Text style={styles.menuItemText}>Developer Settings</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={20} color="#888" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {user?.organization_profile && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Organization Info</Text>
+            <View style={styles.infoCard}>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Name</Text>
+                <Text style={styles.infoValue}>{user.organization_profile.name}</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Contact</Text>
+                <Text style={styles.infoValue}>{user.organization_profile.contact_email}</Text>
+              </View>
+              {user.organization_profile.website && (
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Website</Text>
+                  <Text style={styles.infoValue}>{user.organization_profile.website}</Text>
+                </View>
+              )}
+              {user.organization_profile.areas_of_focus && user.organization_profile.areas_of_focus.length > 0 && (
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Focus Areas</Text>
+                  <Text style={styles.infoValue}>
+                    {user.organization_profile.areas_of_focus.join(', ')}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+        )}
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>App</Text>
+          <View style={styles.menuItem}>
+            <View style={styles.menuItemLeft}>
+              <Ionicons name="information-circle-outline" size={24} color="#888" />
+              <Text style={styles.menuItemText}>Version</Text>
+            </View>
+            <Text style={styles.menuItemValue}>1.0.0</Text>
           </View>
         </View>
-      )}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>App</Text>
-        <View style={styles.menuItem}>
-          <View style={styles.menuItemLeft}>
-            <Ionicons name="information-circle-outline" size={24} color="#888" />
-            <Text style={styles.menuItemText}>Version</Text>
-          </View>
-          <Text style={styles.menuItemValue}>1.0.0</Text>
-        </View>
-      </View>
-
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-        <Ionicons name="log-out-outline" size={24} color="#f44336" />
-        <Text style={styles.logoutButtonText}>Sign Out</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <Ionicons name="log-out-outline" size={24} color="#f44336" />
+          <Text style={styles.logoutButtonText}>Sign Out</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -243,6 +425,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0c0c0c',
+  },
+  scrollView: {
+    flex: 1,
   },
   content: {
     padding: 16,
@@ -264,11 +449,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  nameContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   displayName: {
     color: '#fff',
     fontSize: 22,
     fontWeight: '600',
-    marginBottom: 4,
   },
   email: {
     color: '#888',
@@ -318,6 +507,43 @@ const styles = StyleSheet.create({
   menuItemValue: {
     color: '#888',
     fontSize: 14,
+  },
+  editContainer: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 8,
+  },
+  inputLabel: {
+    color: '#888',
+    fontSize: 12,
+    marginBottom: 6,
+    marginTop: 12,
+  },
+  input: {
+    backgroundColor: '#0c0c0c',
+    borderRadius: 8,
+    padding: 14,
+    color: '#fff',
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  textArea: {
+    minHeight: 100,
+    textAlignVertical: 'top',
+  },
+  saveButton: {
+    backgroundColor: '#d32f2f',
+    paddingVertical: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   passwordChangeContainer: {
     backgroundColor: '#1a1a1a',

@@ -98,4 +98,20 @@ export const authApi = {
     const response = await apiClient.get('/users/me');
     return response.data;
   },
+
+  // Profile update methods
+  updateIndividualProfile: async (data: { display_name?: string; bio?: string }) => {
+    const response = await apiClient.patch('/users/me/individual', data);
+    return response.data;
+  },
+
+  updateOrganizationProfile: async (data: {
+    description?: string;
+    areas_of_focus?: string[];
+    website?: string;
+    contact_email?: string;
+  }) => {
+    const response = await apiClient.patch('/users/me/organization', data);
+    return response.data;
+  },
 };

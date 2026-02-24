@@ -80,6 +80,7 @@ class UserType(str):
     INDIVIDUAL = "individual"
     ORGANIZATION = "organization"
     ADMIN = "admin"
+    DEVELOPER = "developer"
 
 class ApprovalStatus(str):
     PENDING = "pending"
@@ -90,7 +91,7 @@ class ApprovalStatus(str):
 class UserBase(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: EmailStr
-    user_type: str  # individual, organization, admin
+    user_type: str  # individual, organization, admin, developer
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_verified: bool = False
     is_active: bool = True
@@ -318,8 +319,14 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
 async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     """Ensure current user is admin"""
-    if current_user.user_type != "admin":
+    if current_user.user_type not in ["admin", "developer"]:
         raise HTTPException(status_code=403, detail="Admin access required")
+    return current_user
+
+async def get_developer_user(current_user: User = Depends(get_current_user)) -> User:
+    """Ensure current user is developer"""
+    if current_user.user_type != "developer":
+        raise HTTPException(status_code=403, detail="Developer access required")
     return current_user
 
 async def get_organization_user(current_user: User = Depends(get_current_user)) -> User:
@@ -970,6 +977,17 @@ async def change_password(data: ChangePasswordRequest, current_user: User = Depe
 
 # ============== USER ROUTES ==============
 
+# Partial update models for profile editing
+class IndividualProfileUpdate(BaseModel):
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+
+class OrganizationProfileUpdate(BaseModel):
+    description: Optional[str] = None
+    areas_of_focus: Optional[List[str]] = None
+    website: Optional[str] = None
+    contact_email: Optional[EmailStr] = None
+
 @api_router.get("/users/me", response_model=UserResponse)
 async def get_current_user_profile(current_user: User = Depends(get_current_user)):
     """Get current user profile"""
@@ -981,8 +999,8 @@ async def update_individual_profile(
     current_user: User = Depends(get_current_user)
 ):
     """Update individual profile"""
-    if current_user.user_type != "individual":
-        raise HTTPException(status_code=400, detail="Not an individual account")
+    if current_user.user_type not in ["individual", "admin", "developer"]:
+        raise HTTPException(status_code=400, detail="Not an individual/admin/developer account")
     
     users_ref = db.collection('users')
     user_query = users_ref.where(filter=FieldFilter('id', '==', current_user.id)).limit(1)
@@ -991,6 +1009,39 @@ async def update_individual_profile(
         db.collection('users').document(user_docs[0].id).update({
             'individual_profile': profile.model_dump()
         })
+
+    # Get updated user
+    updated_doc = db.collection('users').document(user_docs[0].id).get()
+    user_dict = deserialize_from_firestore(updated_doc.to_dict())
+    return user_to_response(User(**user_dict))
+
+@api_router.patch("/users/me/individual", response_model=UserResponse)
+async def partial_update_individual_profile(
+    profile_update: IndividualProfileUpdate,
+    current_user: User = Depends(get_current_user)
+):
+    """Partially update individual profile (only display_name and bio)"""
+    if current_user.user_type not in ["individual", "admin", "developer"]:
+        raise HTTPException(status_code=400, detail="Not an individual/admin/developer account")
+    
+    users_ref = db.collection('users')
+    user_query = users_ref.where(filter=FieldFilter('id', '==', current_user.id)).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if not user_docs:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get current profile and update only provided fields
+    current_profile = current_user.individual_profile.model_dump() if current_user.individual_profile else {}
+    
+    if profile_update.display_name is not None:
+        current_profile['display_name'] = profile_update.display_name
+    if profile_update.bio is not None:
+        current_profile['bio'] = profile_update.bio
+    
+    db.collection('users').document(user_docs[0].id).update({
+        'individual_profile': current_profile
+    })
     
     # Get updated user
     updated_doc = db.collection('users').document(user_docs[0].id).get()
@@ -1013,6 +1064,43 @@ async def update_organization_profile(
         db.collection('users').document(user_docs[0].id).update({
             'organization_profile': profile.model_dump()
         })
+    
+    # Get updated user
+    updated_doc = db.collection('users').document(user_docs[0].id).get()
+    user_dict = deserialize_from_firestore(updated_doc.to_dict())
+    return user_to_response(User(**user_dict))
+
+@api_router.patch("/users/me/organization", response_model=UserResponse)
+async def partial_update_organization_profile(
+    profile_update: OrganizationProfileUpdate,
+    current_user: User = Depends(get_current_user)
+):
+    """Partially update organization profile (description, areas_of_focus, website, contact_email)"""
+    if current_user.user_type != "organization":
+        raise HTTPException(status_code=400, detail="Not an organization account")
+    
+    users_ref = db.collection('users')
+    user_query = users_ref.where(filter=FieldFilter('id', '==', current_user.id)).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if not user_docs:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get current profile and update only provided fields
+    current_profile = current_user.organization_profile.model_dump() if current_user.organization_profile else {}
+    
+    if profile_update.description is not None:
+        current_profile['description'] = profile_update.description
+    if profile_update.areas_of_focus is not None:
+        current_profile['areas_of_focus'] = profile_update.areas_of_focus
+    if profile_update.website is not None:
+        current_profile['website'] = profile_update.website
+    if profile_update.contact_email is not None:
+        current_profile['contact_email'] = profile_update.contact_email
+    
+    db.collection('users').document(user_docs[0].id).update({
+        'organization_profile': current_profile
+    })
     
     # Get updated user
     updated_doc = db.collection('users').document(user_docs[0].id).get()
@@ -1066,6 +1154,92 @@ async def get_all_organizations(admin: User = Depends(get_admin_user)):
     users_ref = db.collection('users')
     query = users_ref.where(filter=FieldFilter('user_type', '==', 'organization'))
     docs = query.stream()
+    
+    return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
+
+# ============== DEVELOPER ROUTES ==============
+
+class SearchUsersResponse(BaseModel):
+    users: List[UserResponse]
+    total: int
+
+class AssignRoleRequest(BaseModel):
+    user_id: str
+    role: str  # admin or individual
+
+@api_router.get("/developer/users/search", response_model=SearchUsersResponse)
+async def search_users(
+    query: str = "",
+    developer: User = Depends(get_developer_user)
+):
+    """Search users by email or display name (developer only)"""
+    users_ref = db.collection('users')
+    all_docs = users_ref.stream()
+    
+    results = []
+    query_lower = query.lower()
+    
+    for doc in all_docs:
+        user_dict = deserialize_from_firestore(doc.to_dict())
+        user = User(**user_dict)
+        
+        # Skip developer accounts from search results
+        if user.user_type == "developer":
+            continue
+            
+        # Search by email
+        if query_lower in user.email.lower():
+            results.append(user_to_response(user))
+            continue
+            
+        # Search by display name (individual profile)
+        if user.individual_profile and query_lower in user.individual_profile.display_name.lower():
+            results.append(user_to_response(user))
+            continue
+            
+        # Search by organization name
+        if user.organization_profile and query_lower in user.organization_profile.name.lower():
+            results.append(user_to_response(user))
+            continue
+    
+    return SearchUsersResponse(users=results, total=len(results))
+
+@api_router.post("/developer/users/{user_id}/assign-role", response_model=UserResponse)
+async def assign_user_role(
+    user_id: str,
+    role_request: AssignRoleRequest,
+    developer: User = Depends(get_developer_user)
+):
+    """Assign admin or individual role to a user (developer only)"""
+    if role_request.role not in ["admin", "individual"]:
+        raise HTTPException(status_code=400, detail="Role must be 'admin' or 'individual'")
+    
+    users_ref = db.collection('users')
+    query = users_ref.where(filter=FieldFilter('id', '==', user_id)).limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user_dict = deserialize_from_firestore(docs[0].to_dict())
+    
+    # Cannot change developer or organization accounts
+    if user_dict.get('user_type') == 'developer':
+        raise HTTPException(status_code=400, detail="Cannot modify developer accounts")
+    if user_dict.get('user_type') == 'organization':
+        raise HTTPException(status_code=400, detail="Cannot change organization accounts to admin/individual")
+    
+    # Update the user's role
+    db.collection('users').document(docs[0].id).update({'user_type': role_request.role})
+    
+    updated_doc = db.collection('users').document(docs[0].id).get()
+    return user_to_response(User(**deserialize_from_firestore(updated_doc.to_dict())))
+
+@api_router.get("/developer/users/all", response_model=List[UserResponse])
+async def get_all_users(developer: User = Depends(get_developer_user)):
+    """Get all users (developer only)"""
+    users_ref = db.collection('users')
+    docs = users_ref.stream()
     
     return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
 

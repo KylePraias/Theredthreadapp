@@ -55,8 +55,7 @@ export default function AdminDashboardScreen() {
   }, []);
 
   useEffect(() => {
-  if (user?.user_type !== 'admin') {
-    // Defer navigation until after the navigator is ready
+  if (user?.user_type !== 'admin' && user?.user_type !== 'developer') {
     const timeout = setTimeout(() => {
       router.replace('/(tabs)');
     }, 0);
