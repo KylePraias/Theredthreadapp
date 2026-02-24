@@ -370,7 +370,17 @@ async def verify_email_complete(token: str, email: str):
         user_query = users_ref.where(filter=FieldFilter('email', '==', email)).limit(1)
         user_docs = list(user_query.stream())
         if user_docs:
+            user_dict = deserialize_from_firestore(user_docs[0].to_dict())
             db.collection('users').document(user_docs[0].id).update({'is_verified': True})
+
+            # Notify admin if organization
+            if user_dict.get('user_type') == 'organization':
+                org_profile = user_dict.get('organization_profile', {})
+                await send_admin_notification(
+                    org_profile.get('name', 'Unknown'),
+                    user_dict.get('email', '')
+                )
+                logger.info("Admin notification sent for org: %s", org_profile.get('name'))
 
         return HTMLResponse("""
             <div style="font-family: Arial; text-align: center; padding: 50px;">
@@ -455,7 +465,7 @@ async def send_verification_email(email: str, continue_url: str = None):
 async def send_admin_notification(org_name: str, org_email: str):
     """
     Notify admin about new organization signup.
-    Stores notification in Firestore for admin to see.
+    Stores notification in Firestore and sends email to admin.
     """
     admin_email = "theredthreadapp@gmail.com"
     
@@ -471,9 +481,53 @@ async def send_admin_notification(org_name: str, org_email: str):
         
         db.collection('admin_notifications').add(notification_data)
         logger.info("Admin notification created for new org: %s", org_name)
-        return True
     except Exception as e:
         logger.error("Failed to create admin notification: %s", str(e))
+        return False
+
+    # Send email to admin
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        gmail_address = os.environ.get('GMAIL_ADDRESS')
+        gmail_password = os.environ.get('GMAIL_APP_PASSWORD')
+
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = f"New Organization Registration: {org_name}"
+        msg['From'] = gmail_address
+        msg['To'] = admin_email
+
+        html_body = f"""
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9f9f9; padding: 30px; border-radius: 8px;">
+                <h2 style="color: #222;">New Organization Registration</h2>
+                <p style="color: #444;">A new organization has registered and is awaiting your approval:</p>
+                <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                    <tr style="background-color: #f0f0f0;">
+                        <td style="padding: 12px; color: #444; font-weight: bold; width: 40%;">Organization Name</td>
+                        <td style="padding: 12px; color: #222;">{org_name}</td>
+                    </tr>
+                    <tr style="background-color: #fff;">
+                        <td style="padding: 12px; color: #444; font-weight: bold;">Contact Email</td>
+                        <td style="padding: 12px; color: #222;">{org_email}</td>
+                    </tr>
+                </table>
+                <p style="color: #444;">Log in to the admin panel to review and approve or reject this organization.</p>
+            </div>
+            """
+
+        msg.attach(MIMEText(html_body, 'html'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(gmail_address, gmail_password)
+            server.send_message(msg)
+
+        logger.info("Admin notification email sent for new org: %s", org_name)
+        return True
+
+    except Exception as e:
+        logger.error("Failed to send admin notification email: %s", str(e))
         return False
 
 # ============== AUTH ROUTES ==============
