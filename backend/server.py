@@ -29,11 +29,13 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
 # Firebase initialization
-firebase_cred_path = ROOT_DIR / 'firebase-admin.json'
-FIREBASE_API_KEY = os.environ.get('FIREBASE_API_KEY', 'AIzaSyCzFY8f6MPTH1dFKF29GJqGV5Ho6M1Oy6k')
+firebase_cred_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '/secrets/firebase-admin.json')
 
 if not firebase_admin._apps:
-    cred = credentials.Certificate(str(firebase_cred_path))
+    if os.path.exists(firebase_cred_path):
+        cred = credentials.Certificate(firebase_cred_path)
+    else:
+        cred = credentials.ApplicationDefault()
     firebase_admin.initialize_app(cred)
 
 # Firestore client

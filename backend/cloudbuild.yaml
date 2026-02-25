@@ -1,0 +1,7 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '--no-cache', '-t', 'gcr.io/redthread-e6955/theredthreadapp-backend', '.']
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/redthread-e6955/theredthreadapp-backend']
+images:
+  - 'gcr.io/redthread-e6955/theredthreadapp-backend'
