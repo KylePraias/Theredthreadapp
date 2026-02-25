@@ -30,6 +30,7 @@ load_dotenv(ROOT_DIR / '.env')
 
 # Firebase initialization
 firebase_cred_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '/secrets/firebase-admin.json')
+FIREBASE_API_KEY: str = os.environ.get('FIREBASE_API_KEY', 'AIzaSyCzFY8f6MPTH1dFKF29GJqGV5Ho6M1Oy6k')
 
 if not firebase_admin._apps:
     if os.path.exists(firebase_cred_path):
