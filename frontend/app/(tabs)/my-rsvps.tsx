@@ -46,7 +46,24 @@ export default function MyRsvpsScreen() {
   const fetchRsvps = useCallback(async () => {
     try {
       const data = await eventsApi.getMyRsvps();
-      setRsvps(data);
+      const sorted = [...data].sort((a, b) => {
+      const now = new Date();
+      const aDate = new Date(a.event.date);
+      const bDate = new Date(b.event.date);
+      const aUpcoming = aDate > now;
+      const bUpcoming = bDate > now;
+
+      // Upcoming events before past events
+      if (aUpcoming && !bUpcoming) return -1;
+      if (!aUpcoming && bUpcoming) return 1;
+
+      // Both upcoming: soonest first
+      if (aUpcoming && bUpcoming) return aDate.getTime() - bDate.getTime();
+
+      // Both past: most recent first
+      return bDate.getTime() - aDate.getTime();
+    });
+    setRsvps(sorted);
     } catch (error) {
       console.log('Error fetching RSVPs:', error);
     } finally {
@@ -116,10 +133,12 @@ export default function MyRsvpsScreen() {
         )}
         <View style={styles.eventHeader}>
           <Text style={styles.orgName}>{item.event.organization_name}</Text>
-          <View style={styles.rsvpBadge}>
-            <Ionicons name="checkmark-circle" size={16} color="#4caf50" />
-            <Text style={styles.rsvpStatus}>RSVP'd</Text>
-          </View>
+          {upcoming && (
+            <View style={styles.rsvpBadge}>
+              <Ionicons name="checkmark-circle" size={16} color="#4caf50" />
+              <Text style={styles.rsvpStatus}>RSVP'd</Text>
+            </View>
+          )}
         </View>
         <Text style={styles.eventName}>{item.event.name}</Text>
         <View style={styles.eventFooter}>

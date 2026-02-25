@@ -1182,10 +1182,6 @@ async def search_users(
     for doc in all_docs:
         user_dict = deserialize_from_firestore(doc.to_dict())
         user = User(**user_dict)
-        
-        # Skip developer accounts from search results
-        if user.user_type == "developer":
-            continue
             
         # Search by email
         if query_lower in user.email.lower():
