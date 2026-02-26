@@ -429,7 +429,8 @@ async def send_verification_email(email: str, continue_url: str = None):
             'used': False
         })
 
-        verification_link = f"http://192.168.68.101:8001/api/auth/verify-email-complete?token={verification_token}&email={email}"
+        base_url = os.environ.get('BASE_URL', 'https://theredthreadapp-backend-202099205262.us-east4.run.app')
+        verification_link = f"{base_url}/api/auth/verify-email-complete?token={verification_token}&email={email}"   
         
         # Send email via Gmail SMTP
         import smtplib
