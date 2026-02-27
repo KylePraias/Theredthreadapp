@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,17 +23,18 @@ export default function SettingsScreen() {
   const { user, logout, refreshUser } = useAuthStore();
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
+  const [showBugReport, setShowBugReport] = useState(false);
+  const [bugReportText, setBugReportText] = useState('');
+  const [isSubmittingBugReport, setIsSubmittingBugReport] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
 
-  // Individual profile fields
   const [displayName, setDisplayName] = useState(user?.individual_profile?.display_name || '');
   const [bio, setBio] = useState(user?.individual_profile?.bio || '');
 
-  // Organization profile fields
   const [orgDescription, setOrgDescription] = useState(user?.organization_profile?.description || '');
   const [orgWebsite, setOrgWebsite] = useState(user?.organization_profile?.website || '');
   const [orgContactEmail, setOrgContactEmail] = useState(user?.organization_profile?.contact_email || '');
@@ -41,17 +43,17 @@ export default function SettingsScreen() {
   );
 
   const handleLogout = async () => {
-  Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-    { text: 'Cancel', style: 'cancel' },
-    {
-      text: 'Sign Out',
-      style: 'destructive',
-      onPress: async () => {
-        await logout();
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          await logout();
+        },
       },
-    },
-  ]);
-};
+    ]);
+  };
 
   const handleChangePassword = async () => {
     if (!currentPassword || !newPassword || !confirmPassword) {
@@ -119,6 +121,26 @@ export default function SettingsScreen() {
       Alert.alert('Error', message);
     } finally {
       setIsUpdatingProfile(false);
+    }
+  };
+
+  const handleSubmitBugReport = async () => {
+    if (!bugReportText.trim()) {
+      Alert.alert('Error', 'Please describe the issue before submitting');
+      return;
+    }
+
+    setIsSubmittingBugReport(true);
+    try {
+      await authApi.submitBugReport(bugReportText.trim());
+      Alert.alert('Thank You', 'Your bug report has been submitted successfully. We appreciate your feedback!');
+      setBugReportText('');
+      setShowBugReport(false);
+    } catch (error: any) {
+      const message = error.response?.data?.detail || 'Failed to submit bug report. Please try again.';
+      Alert.alert('Error', message);
+    } finally {
+      setIsSubmittingBugReport(false);
     }
   };
 
@@ -410,6 +432,17 @@ export default function SettingsScreen() {
             </View>
             <Text style={styles.menuItemValue}>1.0.0</Text>
           </View>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => setShowBugReport(true)}
+          >
+            <View style={styles.menuItemLeft}>
+              <Ionicons name="bug-outline" size={24} color="#ff9800" />
+              <Text style={styles.menuItemText}>Report a Bug</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#888" />
+          </TouchableOpacity>
         </View>
 
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
@@ -417,6 +450,69 @@ export default function SettingsScreen() {
           <Text style={styles.logoutButtonText}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      <Modal
+        visible={showBugReport}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowBugReport(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Report a Bug</Text>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => {
+                  setShowBugReport(false);
+                  setBugReportText('');
+                }}
+              >
+                <Ionicons name="close" size={24} color="#888" />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.modalDescription}>
+              Found an issue? Please describe what happened and how to reproduce it.
+            </Text>
+
+            <TextInput
+              style={styles.bugReportInput}
+              placeholder="Describe the issue..."
+              placeholderTextColor="#666"
+              value={bugReportText}
+              onChangeText={setBugReportText}
+              multiline
+              numberOfLines={6}
+              textAlignVertical="top"
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => {
+                  setShowBugReport(false);
+                  setBugReportText('');
+                }}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.submitButton, !bugReportText.trim() && styles.submitButtonDisabled]}
+                onPress={handleSubmitBugReport}
+                disabled={isSubmittingBugReport || !bugReportText.trim()}
+              >
+                {isSubmittingBugReport ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.submitButtonText}>Submit</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -605,6 +701,84 @@ const styles = StyleSheet.create({
   logoutButtonText: {
     color: '#f44336',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  modalTitle: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalDescription: {
+    color: '#888',
+    fontSize: 14,
+    marginBottom: 16,
+    lineHeight: 20,
+  },
+  bugReportInput: {
+    backgroundColor: '#0c0c0c',
+    borderRadius: 12,
+    padding: 16,
+    color: '#fff',
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+    minHeight: 150,
+    textAlignVertical: 'top',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 20,
+  },
+  cancelButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: '#333',
+  },
+  cancelButtonText: {
+    color: '#888',
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  submitButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    backgroundColor: '#d32f2f',
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  submitButtonDisabled: {
+    backgroundColor: '#444',
+  },
+  submitButtonText: {
+    color: '#fff',
+    fontSize: 15,
     fontWeight: '600',
   },
 });

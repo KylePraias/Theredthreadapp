@@ -114,4 +114,10 @@ export const authApi = {
     const response = await apiClient.patch('/users/me/organization', data);
     return response.data;
   },
+
+  // Bug report
+  submitBugReport: async (description: string) => {
+    const response = await apiClient.post('/bug-report', { description });
+    return response.data;
+  },
 };

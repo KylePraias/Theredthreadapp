@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,7 @@ import {
   Alert,
   Linking,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { eventsApi } from '../../../src/api/events';
 import { useAuthStore } from '../../../src/store/authStore';
@@ -47,8 +47,19 @@ export default function EventDetailScreen() {
   const [hasRsvpd, setHasRsvpd] = useState(false);
 
   useEffect(() => {
-    fetchEventDetails();
+    setEvent(null);
+    setRsvps([]);
+    setHasRsvpd(false);
+    setIsLoading(true);
   }, [id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (id) {
+        fetchEventDetails();
+      }
+    }, [id, user?.id])
+  );
 
   const fetchEventDetails = async () => {
     try {

@@ -19,18 +19,17 @@ export default function VerifyEmailScreen() {
   const { login } = useAuthStore();
   const [isLoading, setIsLoading] = useState(false);
   const [isResending, setIsResending] = useState(false);
-  const [verificationLink, setVerificationLink] = useState<string | null>(null);
   const [isVerified, setIsVerified] = useState(false);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cooldownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Check if we have an oobCode from the URL (user clicked verification link)
   useEffect(() => {
     if (params.oobCode && params.email) {
       handleVerifyWithCode(params.oobCode);
     }
   }, [params.oobCode]);
 
-  // Poll to check if email has been verified
   useEffect(() => {
     if (!params.email || isLoading || isVerified) return;
 
@@ -38,19 +37,16 @@ export default function VerifyEmailScreen() {
       try {
         const response = await authApi.checkVerificationStatus(params.email);
         if (response.is_verified) {
-          // Email is verified! Stop polling and show the sign in button
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
           }
           setIsVerified(true);
         }
       } catch (error) {
-        // Ignore errors during polling
         console.log('Polling error:', error);
       }
     };
 
-    // Start polling every 3 seconds
     pollingIntervalRef.current = setInterval(checkVerificationStatus, 3000);
 
     return () => {
@@ -60,23 +56,27 @@ export default function VerifyEmailScreen() {
     };
   }, [params.email, isLoading, isVerified]);
 
-  // Handle deep link for email verification
+  useEffect(() => {
+    return () => {
+      if (cooldownIntervalRef.current) {
+        clearInterval(cooldownIntervalRef.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     const handleDeepLink = (event: { url: string }) => {
       const url = event.url;
-      // Parse the oobCode from the Firebase verification link
       const oobCodeMatch = url.match(/[?&]oobCode=([^&]+)/);
       const modeMatch = url.match(/[?&]mode=([^&]+)/);
-      
+
       if (oobCodeMatch && modeMatch && modeMatch[1] === 'verifyEmail') {
         handleVerifyWithCode(oobCodeMatch[1]);
       }
     };
 
-    // Listen for incoming links
     const subscription = Linking.addEventListener('url', handleDeepLink);
 
-    // Check if app was opened with a link
     Linking.getInitialURL().then((url) => {
       if (url) {
         handleDeepLink({ url });
@@ -98,8 +98,7 @@ export default function VerifyEmailScreen() {
     try {
       const response = await authApi.verifyEmail(params.email, oobCode, !isToken);
       await login(response.access_token, response.user);
-      
-      // Route based on user type
+
       if (response.user.user_type === 'organization') {
         router.replace('/(auth)/pending-approval');
       } else {
@@ -113,30 +112,39 @@ export default function VerifyEmailScreen() {
     }
   };
 
+  const startCooldownTimer = () => {
+    setResendCooldown(60);
+
+    if (cooldownIntervalRef.current) {
+      clearInterval(cooldownIntervalRef.current);
+    }
+
+    cooldownIntervalRef.current = setInterval(() => {
+      setResendCooldown((prev) => {
+        if (prev <= 1) {
+          if (cooldownIntervalRef.current) {
+            clearInterval(cooldownIntervalRef.current);
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
   const handleResend = async () => {
+    if (resendCooldown > 0) return;
+
     setIsResending(true);
     try {
-      const response = await authApi.resendVerification(params.email);
-      // In development, the verification_link is returned
-      if (response.verification_link) {
-        setVerificationLink(response.verification_link);
-      }
+      await authApi.resendVerification(params.email);
       Alert.alert('Success', 'A new verification link has been sent to your email');
+      startCooldownTimer();
     } catch (error: any) {
       const message = error.response?.data?.detail || 'Failed to resend verification link';
       Alert.alert('Error', message);
     } finally {
       setIsResending(false);
-    }
-  };
-
-  const handleOpenLink = async () => {
-    if (verificationLink) {
-      try {
-        await Linking.openURL(verificationLink);
-      } catch (error) {
-        Alert.alert('Error', 'Could not open verification link');
-      }
     }
   };
 
@@ -148,14 +156,14 @@ export default function VerifyEmailScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <View style={styles.iconContainer}>
-          <Ionicons 
-            name={isVerified ? "checkmark-circle" : "mail-open"} 
-            size={50} 
-            color={isVerified ? "#4caf50" : "#d32f2f"} 
+          <Ionicons
+            name={isVerified ? 'checkmark-circle' : 'mail-open'}
+            size={50}
+            color={isVerified ? '#4caf50' : '#d32f2f'}
           />
         </View>
         <Text style={styles.title}>
-          {isVerified ? "Email Verified!" : "Check Your Email"}
+          {isVerified ? 'Email Verified!' : 'Check Your Email'}
         </Text>
         {!isVerified && (
           <>
@@ -201,31 +209,23 @@ export default function VerifyEmailScreen() {
       )}
 
       {isVerified && (
-        <TouchableOpacity
-          style={styles.signInButton}
-          onPress={handleGoToSignIn}
-        >
+        <TouchableOpacity style={styles.signInButton} onPress={handleGoToSignIn}>
           <Ionicons name="log-in-outline" size={20} color="#fff" />
           <Text style={styles.signInButtonText}>Go to Sign In</Text>
-        </TouchableOpacity>
-      )}
-
-      {verificationLink && !isVerified && (
-        <TouchableOpacity
-          style={styles.openLinkButton}
-          onPress={handleOpenLink}
-        >
-          <Ionicons name="open-outline" size={20} color="#fff" />
-          <Text style={styles.openLinkButtonText}>Open Verification Link (Dev)</Text>
         </TouchableOpacity>
       )}
 
       {!isVerified && (
         <View style={styles.resendContainer}>
           <Text style={styles.resendText}>Didn't receive the email?</Text>
-          <TouchableOpacity onPress={handleResend} disabled={isResending}>
+          <TouchableOpacity
+            onPress={handleResend}
+            disabled={isResending || resendCooldown > 0}
+          >
             {isResending ? (
               <ActivityIndicator size="small" color="#d32f2f" />
+            ) : resendCooldown > 0 ? (
+              <Text style={styles.resendCooldownText}>Resend in {resendCooldown}s</Text>
             ) : (
               <Text style={styles.resendLink}>Resend Link</Text>
             )}
@@ -243,10 +243,7 @@ export default function VerifyEmailScreen() {
       )}
 
       {!isVerified && (
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-        >
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={20} color="#888" />
           <Text style={styles.backButtonText}>Back to Sign Up</Text>
         </TouchableOpacity>
@@ -351,21 +348,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  openLinkButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#2196f3',
-    paddingVertical: 14,
-    borderRadius: 12,
-    marginBottom: 16,
-    gap: 8,
-  },
-  openLinkButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
   resendContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -381,6 +363,11 @@ const styles = StyleSheet.create({
     color: '#d32f2f',
     fontSize: 14,
     fontWeight: '600',
+  },
+  resendCooldownText: {
+    color: '#666',
+    fontSize: 14,
+    fontWeight: '500',
   },
   noteContainer: {
     flexDirection: 'row',

@@ -431,7 +431,7 @@ async def send_verification_email(email: str, continue_url: str = None):
 
         base_url = os.environ.get('BASE_URL', 'https://theredthreadapp-backend-202099205262.us-east4.run.app')
         verification_link = f"{base_url}/api/auth/verify-email-complete?token={verification_token}&email={email}"   
-        
+
         # Send email via Gmail SMTP
         import smtplib
         from email.mime.text import MIMEText
@@ -1490,6 +1490,82 @@ async def get_my_rsvps(current_user: User = Depends(get_current_user)):
             })
     
     return result
+
+# ============== BUG REPORT ROUTES ==============
+
+class BugReportRequest(BaseModel):
+    description: str
+
+@api_router.post("/bug-report", response_model=MessageResponse)
+async def submit_bug_report(
+    data: BugReportRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Submit a bug report via email"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        gmail_address = os.environ.get('GMAIL_ADDRESS')
+        gmail_password = os.environ.get('GMAIL_APP_PASSWORD')
+
+        if not gmail_address or not gmail_password:
+            raise HTTPException(status_code=500, detail="Email service not configured")
+
+        developer_email = "theredthreadapp@gmail.com"
+
+        display_name = current_user.email
+        if current_user.individual_profile:
+            display_name = current_user.individual_profile.display_name
+        elif current_user.organization_profile:
+            display_name = current_user.organization_profile.name
+
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = "Bug Report"
+        msg['From'] = gmail_address
+        msg['To'] = developer_email
+
+        html_body = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2 style="color: #d32f2f;">Bug Report</h2>
+            <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+                <tr style="background-color: #f5f5f5;">
+                    <td style="padding: 12px; font-weight: bold; width: 30%;">Reporter</td>
+                    <td style="padding: 12px;">{display_name}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px; font-weight: bold;">Email</td>
+                    <td style="padding: 12px;">{current_user.email}</td>
+                </tr>
+                <tr style="background-color: #f5f5f5;">
+                    <td style="padding: 12px; font-weight: bold;">User Type</td>
+                    <td style="padding: 12px;">{current_user.user_type}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 12px; font-weight: bold;">Submitted At</td>
+                    <td style="padding: 12px;">{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</td>
+                </tr>
+            </table>
+            <h3 style="color: #333;">Issue Description:</h3>
+            <div style="background-color: #f9f9f9; padding: 16px; border-radius: 8px; border-left: 4px solid #d32f2f;">
+                <p style="white-space: pre-wrap; margin: 0;">{data.description}</p>
+            </div>
+        </div>
+        """
+
+        msg.attach(MIMEText(html_body, 'html'))
+
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(gmail_address, gmail_password)
+            server.send_message(msg)
+
+        logger.info("Bug report submitted by user: %s", current_user.email)
+        return MessageResponse(message="Bug report submitted successfully. Thank you for your feedback!")
+
+    except Exception as e:
+        logger.error("Failed to submit bug report: %s", str(e))
+        raise HTTPException(status_code=500, detail="Failed to submit bug report. Please try again later.")
 
 # ============== HEALTH CHECK ==============
 
