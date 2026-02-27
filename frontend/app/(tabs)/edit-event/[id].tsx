@@ -60,6 +60,13 @@ export default function EditEventScreen() {
       return;
     }
 
+    // Add this
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (contactEmail && !emailRegex.test(contactEmail)) {
+      Alert.alert('Error', 'Please enter a valid contact email or leave it blank');
+      return;
+    }
+
     setIsSaving(true);
     try {
       await eventsApi.updateEvent(id, {

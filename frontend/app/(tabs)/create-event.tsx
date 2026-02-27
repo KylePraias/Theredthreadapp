@@ -38,6 +38,13 @@ export default function CreateEventScreen() {
       return;
     }
 
+    // Add this email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (contactEmail && !emailRegex.test(contactEmail)) {
+      Alert.alert('Error', 'Please enter a valid contact email or leave it blank');
+      return;
+    }
+
     setIsLoading(true);
     try {
       await eventsApi.createEvent({
