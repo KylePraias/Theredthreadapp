@@ -35,6 +35,16 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="organizations"
+        options={{
+          title: 'Orgs',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="people" size={size} color={color} />
+          ),
+          headerTitle: 'Organizations',
+        }}
+      />
+      <Tabs.Screen
         name="my-rsvps"
         options={{
           title: 'My RSVPs',
@@ -88,6 +98,13 @@ export default function TabsLayout() {
         options={{
           href: null,
           headerTitle: 'Edit Event',
+        }}
+      />
+      <Tabs.Screen
+        name="organization/[id]"
+        options={{
+          href: null,
+          headerTitle: 'Organization',
         }}
       />
     </Tabs>

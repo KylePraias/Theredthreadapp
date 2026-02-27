@@ -1161,6 +1161,35 @@ async def get_all_organizations(admin: User = Depends(get_admin_user)):
     
     return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
 
+# ============== PUBLIC ORGANIZATION ROUTES ==============
+
+@api_router.get("/organizations", response_model=List[UserResponse])
+async def get_approved_organizations():
+    """Get all approved organizations (public endpoint)"""
+    users_ref = db.collection('users')
+    query = users_ref.where(filter=FieldFilter('user_type', '==', 'organization')).where(filter=FieldFilter('approval_status', '==', 'approved')).where(filter=FieldFilter('is_verified', '==', True))
+    docs = query.stream()
+    
+    return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
+
+@api_router.get("/organizations/{org_id}", response_model=UserResponse)
+async def get_organization_by_id(org_id: str):
+    """Get a specific organization by ID (public endpoint)"""
+    users_ref = db.collection('users')
+    query = users_ref.where(filter=FieldFilter('id', '==', org_id)).where(filter=FieldFilter('user_type', '==', 'organization')).limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    user_dict = deserialize_from_firestore(docs[0].to_dict())
+    user = User(**user_dict)
+    
+    if user.approval_status != "approved" or not user.is_verified:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    
+    return user_to_response(user)
+
 # ============== DEVELOPER ROUTES ==============
 
 class SearchUsersResponse(BaseModel):

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { eventsApi } from '../../src/api/events';
 import { useAuthStore } from '../../src/store/authStore';
@@ -47,9 +47,11 @@ export default function EventsScreen() {
     }
   }, [sortBy, sortOrder]);
 
-  useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchEvents();
+    }, [sortBy, sortOrder])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);

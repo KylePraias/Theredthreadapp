@@ -2,7 +2,8 @@ import React, { useEffect } from 'react';
 import { Stack, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../src/store/authStore';
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, ActivityIndicator, StyleSheet, Platform, AppState } from 'react-native'
+import * as NavigationBar from 'expo-navigation-bar';
 
 function AuthGuard() {
   const { user, isInitialized } = useAuthStore();
@@ -30,6 +31,24 @@ export default function RootLayout() {
     initialize();
   }, []);
 
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      const applyImmersive = () => {
+        NavigationBar.setVisibilityAsync('hidden');
+      };
+
+      applyImmersive();
+
+      const subscription = AppState.addEventListener('change', (state) => {
+        if (state === 'active') {
+          applyImmersive();
+        }
+      });
+
+      return () => subscription.remove();
+    }
+  }, []);
+
   if (!isInitialized || isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -41,7 +60,7 @@ export default function RootLayout() {
 
   return (
     <>
-      <StatusBar style="light" />
+      <StatusBar style="light" translucent />
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: '#1a1a1a' },
