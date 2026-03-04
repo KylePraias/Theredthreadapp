@@ -1156,8 +1156,8 @@ async def reset_password_page(token: str, email: str):
                         <input type="password" id="confirmPassword" required />
                     </div>
                     <button type="submit">Reset Password</button>
-                    <div id="message"></div>
                 </form>
+                <div id="message"></div>
             </div>
             <script>
                 const password = document.getElementById('password');
@@ -1201,10 +1201,10 @@ async def reset_password_page(token: str, email: str):
                         }});
                         const data = await res.json();
                         if (res.ok) {{
-                            messageEl.className = 'success';
-                            messageEl.textContent = 'Password reset successfully! You can now log in with your new password.';
                             document.getElementById('resetForm').style.display = 'none';
-                        }} else {{
+                            document.getElementById('message').className = 'success';
+                            document.getElementById('message').textContent = 'Password changed successfully! You can now log in with your new password.';
+                        }}  else {{
                             messageEl.className = 'error';
                             messageEl.textContent = data.detail || 'Failed to reset password';
                         }}
