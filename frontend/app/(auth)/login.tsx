@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -14,18 +14,10 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
-import * as Crypto from 'expo-crypto';
 import { authApi } from '../../src/api/auth';
 import { useAuthStore } from '../../src/store/authStore';
-import { firebaseConfig, isFirebaseConfigured } from '../../src/config/firebase';
-
-// Enable web browser for OAuth
-WebBrowser.maybeCompleteAuthSession();
-
-// Google OAuth configuration
-const GOOGLE_CLIENT_ID = '202099205262-...apps.googleusercontent.com'; // Web client ID needed
+import { isFirebaseConfigured } from '../../src/config/firebase';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -93,91 +85,87 @@ export default function LoginScreen() {
   };
 
   const handleGoogleSignIn = async () => {
-    if (!isFirebaseConfigured()) {
-      Alert.alert(
-        'Firebase Not Configured',
-        'Google Sign-In requires Firebase configuration. Please ensure Firebase is properly set up.'
-      );
+  if (!isFirebaseConfigured()) {
+    Alert.alert(
+      'Configuration Error',
+      'Firebase is not properly configured. Please check your environment variables.'
+    );
+    return;
+  }
+
+  setIsGoogleLoading(true);
+  try {
+    const redirectUri = AuthSession.makeRedirectUri({
+      scheme: 'redthread',
+    });
+
+    const discovery = await AuthSession.fetchDiscoveryAsync(
+      'https://accounts.google.com'
+    );
+
+    const request = new AuthSession.AuthRequest({
+      clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID!,
+      redirectUri,
+      scopes: ['openid', 'profile', 'email'],
+      responseType: AuthSession.ResponseType.Token,
+    });
+
+    const result = await request.promptAsync(discovery);
+
+    if (result.type !== 'success') {
+      if (result.type === 'error') {
+        Alert.alert('Error', result.error?.message || 'Google Sign-In failed');
+      }
       return;
     }
 
-    setIsGoogleLoading(true);
-    try {
-      // Generate nonce for security
-      const nonce = await Crypto.randomUUID();
-      const hashedNonce = await Crypto.digestStringAsync(
-        Crypto.CryptoDigestAlgorithm.SHA256,
-        nonce
-      );
+    const { access_token } = result.params;
 
-      // Create OAuth discovery document for Google
-      const discovery = {
-        authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
-        tokenEndpoint: 'https://oauth2.googleapis.com/token',
-      };
+    const userInfoResponse = await fetch(
+      `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${access_token}`
+    );
+    const googleUser = await userInfoResponse.json();
 
-      // Get redirect URI
-      const redirectUri = AuthSession.makeRedirectUri({
-        scheme: 'com.redthread.app',
-        path: 'auth',
-      });
-
-      // Create auth request
-      const authRequest = new AuthSession.AuthRequest({
-        clientId: firebaseConfig.apiKey ? '202099205262-YOUR_WEB_CLIENT_ID.apps.googleusercontent.com' : '',
-        redirectUri,
-        scopes: ['openid', 'profile', 'email'],
-        responseType: AuthSession.ResponseType.Token,
-        extraParams: {
-          nonce: hashedNonce,
-        },
-      });
-
-      // Prompt for authentication
-      const result = await authRequest.promptAsync(discovery);
-
-      if (result.type === 'success') {
-        const { access_token } = result.params;
-        
-        // Get user info from Google
-        const userInfoResponse = await fetch(
-          `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${access_token}`
-        );
-        const userInfo = await userInfoResponse.json();
-
-        // Sign in with our backend
-        try {
-          const response = await authApi.googleSignInIndividual({
-            firebase_uid: userInfo.id,
-            email: userInfo.email,
-            display_name: userInfo.name || userInfo.email.split('@')[0],
-            profile_image: userInfo.picture,
-          });
-
-          await login(response.access_token, response.user);
-          
-          // Route based on user type
-          if (response.user.user_type === 'organization' && response.user.approval_status === 'pending') {
-            router.replace('/(auth)/pending-approval');
-          } else if (response.user.user_type === 'organization' && response.user.approval_status === 'rejected') {
-            router.replace('/(auth)/rejected');
-          } else {
-            router.replace('/(tabs)');
-          }
-        } catch (apiError: any) {
-          const message = apiError.response?.data?.detail || 'Failed to complete sign-in.';
-          Alert.alert('Error', message);
-        }
-      } else if (result.type === 'error') {
-        Alert.alert('Error', result.error?.message || 'Google Sign-In failed');
-      }
-    } catch (error: any) {
-      console.log('Google Sign-In Error:', error);
-      Alert.alert('Error', 'Google Sign-In is not available. Please use email/password to sign in.');
-    } finally {
-      setIsGoogleLoading(false);
+    if (!googleUser || !googleUser.email) {
+      throw new Error('Failed to get user information from Google');
     }
-  };
+
+    // Send to our backend
+    const response = await authApi.googleSignInIndividual({
+      firebase_uid: googleUser.id,
+      email: googleUser.email,
+      display_name: googleUser.name || googleUser.email.split('@')[0],
+      profile_image: googleUser.picture || undefined,
+    });
+
+    await login(response.access_token, response.user);
+
+    // Route based on user type
+    if (response.user.user_type === 'organization' && response.user.approval_status === 'pending') {
+      router.replace('/(auth)/pending-approval');
+    } else if (response.user.user_type === 'organization' && response.user.approval_status === 'rejected') {
+      router.replace('/(auth)/rejected');
+    } else {
+      router.replace('/(tabs)');
+    }
+  } catch (error: any) {
+    console.log('Google Sign-In Error:', error);
+
+    // Check if it's a backend error about existing account
+    const backendMessage = error.response?.data?.detail;
+    if (backendMessage) {
+      Alert.alert('Sign In Error', backendMessage);
+      return;
+    }
+
+    Alert.alert(
+      'Sign In Error',
+      error.message || 'Failed to sign in with Google. Please try again.'
+    );
+  } finally {
+    setIsGoogleLoading(false);
+  }
+};
 
   return (
     <KeyboardAvoidingView
