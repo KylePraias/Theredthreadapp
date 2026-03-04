@@ -64,7 +64,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
  logout: async () => {
   set({ isLoggingOut: true });
   await storage.deleteItem('auth_token');
-  set({ token: null, user: null });
+  set({ token: null, user: null, isLoggingOut: false });
 },
 
   initialize: async () => {

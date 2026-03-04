@@ -10,7 +10,10 @@ export default function RejectedScreen() {
 
   const handleLogout = async () => {
     await logout();
-    router.replace('/');
+    // Explicitly navigate to welcome page after logout
+    setTimeout(() => {
+      router.replace('/welcome');
+    }, 100);
   };
 
   return (

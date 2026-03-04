@@ -45,11 +45,19 @@ interface Event {
 }
 
 export default function OrganizationDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, from } = useLocalSearchParams<{ id: string; from?: string }>();
   const router = useRouter();
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  const handleGoBack = () => {
+    if (from === 'organizations') {
+      router.replace('/(tabs)/organizations');
+    } else {
+      router.back();
+    }
+  };
 
   useEffect(() => {
     fetchOrganizationDetails();
@@ -114,7 +122,7 @@ export default function OrganizationDetailScreen() {
       <View style={styles.errorContainer}>
         <Ionicons name="alert-circle" size={60} color="#f44336" />
         <Text style={styles.errorText}>Organization not found</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
           <Text style={styles.backButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
@@ -125,6 +133,15 @@ export default function OrganizationDetailScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Custom Header with Back Button */}
+      <View style={styles.customHeader}>
+        <TouchableOpacity style={styles.headerBackButton} onPress={handleGoBack}>
+          <Ionicons name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Organization</Text>
+        <View style={{ width: 40 }} />
+      </View>
+      
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <View style={styles.avatarLarge}>
@@ -238,6 +255,26 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  customHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 16,
+    paddingTop: 50,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  headerBackButton: {
+    padding: 8,
+    marginLeft: -8,
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   scrollContent: {
     padding: 16,

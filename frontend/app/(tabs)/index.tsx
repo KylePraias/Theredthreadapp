@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -81,7 +82,10 @@ export default function EventsScreen() {
   const renderEvent = ({ item }: { item: Event }) => (
     <TouchableOpacity
       style={styles.eventCard}
-      onPress={() => router.push(`/(tabs)/event/${item.id}`)}
+      onPress={() => router.push({
+        pathname: '/(tabs)/event/[id]',
+        params: { id: item.id, from: 'events' }
+      })}
     >
       <View style={styles.eventHeader}>
         <Text style={styles.orgName}>{item.organization_name}</Text>
@@ -154,11 +158,20 @@ export default function EventsScreen() {
       </View>
 
       {events.length === 0 ? (
-        <View style={styles.emptyContainer}>
+        <ScrollView
+          contentContainerStyle={styles.emptyContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#d32f2f"
+            />
+          }
+        >
           <Ionicons name="calendar-outline" size={60} color="#333" />
           <Text style={styles.emptyText}>No upcoming events</Text>
           <Text style={styles.emptySubtext}>Check back later for new events</Text>
-        </View>
+        </ScrollView>
       ) : (
         <FlatList
           data={events}

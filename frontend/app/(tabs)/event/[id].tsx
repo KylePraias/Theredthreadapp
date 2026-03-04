@@ -37,7 +37,7 @@ interface RSVP {
 }
 
 export default function EventDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, from } = useLocalSearchParams<{ id: string; from?: string }>();
   const router = useRouter();
   const { user } = useAuthStore();
   const [event, setEvent] = useState<Event | null>(null);
@@ -45,6 +45,18 @@ export default function EventDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRsvping, setIsRsvping] = useState(false);
   const [hasRsvpd, setHasRsvpd] = useState(false);
+
+  const handleGoBack = () => {
+    if (from === 'events') {
+      router.replace('/(tabs)');
+    } else if (from === 'rsvps') {
+      router.replace('/(tabs)/my-rsvps');
+    } else if (from === 'my-events') {
+      router.replace('/(tabs)/my-events');
+    } else {
+      router.back();
+    }
+  };
 
   useEffect(() => {
     setEvent(null);
@@ -148,7 +160,7 @@ export default function EventDetailScreen() {
       <View style={styles.errorContainer}>
         <Ionicons name="alert-circle" size={60} color="#f44336" />
         <Text style={styles.errorText}>Event not found</Text>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backButton} onPress={handleGoBack}>
           <Text style={styles.backButtonText}>Go Back</Text>
         </TouchableOpacity>
       </View>
@@ -160,6 +172,15 @@ export default function EventDetailScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Custom Header with Back Button */}
+      <View style={styles.customHeader}>
+        <TouchableOpacity style={styles.headerBackButton} onPress={handleGoBack}>
+          <Ionicons name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Event Details</Text>
+        <View style={{ width: 40 }} />
+      </View>
+      
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
           <Text style={styles.orgName}>{event.organization_name}</Text>
@@ -299,6 +320,26 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  customHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 16,
+    paddingTop: 50,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  headerBackButton: {
+    padding: 8,
+    marginLeft: -8,
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
   },
   scrollContent: {
     padding: 16,

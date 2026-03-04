@@ -447,8 +447,8 @@ export default function AdminDashboardScreen() {
             <Text style={styles.adminEmail}>{user?.email}</Text>
           </View>
         </View>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.push('/(tabs)')}>
-          <Ionicons name="home-outline" size={20} color="#888" />
+        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+          <Ionicons name="arrow-back" size={20} color="#888" />
         </TouchableOpacity>
       </View>
 

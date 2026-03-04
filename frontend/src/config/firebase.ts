@@ -1,10 +1,11 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
+import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
   browserPopupRedirectResolver,
   initializeAuth,
+  Auth,
 } from 'firebase/auth';
 import { Platform } from 'react-native';
 
@@ -21,31 +22,56 @@ export const isFirebaseConfigured = (): boolean => {
   return !!(firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId);
 };
 
-// Initialize Firebase App
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let googleProvider: GoogleAuthProvider | null = null;
 
-// Initialize Auth
-let auth: ReturnType<typeof getAuth>;
-try {
-  auth = Platform.OS === 'web'
-    ? initializeAuth(app)
-    : getAuth(app);
-} catch (error) {
-  auth = getAuth(app);
-}
+const getFirebaseApp = () => {
+  if (!app) {
+    if (!isFirebaseConfigured()) {
+      throw new Error('Firebase is not configured');
+    }
+    app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+  }
+  return app;
+};
 
-// Google Auth Provider
-const googleProvider = new GoogleAuthProvider();
-googleProvider.addScope('email');
-googleProvider.addScope('profile');
+const getFirebaseAuth = () => {
+  if (!auth) {
+    const firebaseApp = getFirebaseApp();
+    try {
+      auth = Platform.OS === 'web'
+        ? getAuth(firebaseApp)
+        : initializeAuth(firebaseApp);
+    } catch (error) {
+      auth = getAuth(firebaseApp);
+    }
+  }
+  return auth;
+};
 
-// Google Sign-In function (web only)
+const getGoogleProvider = () => {
+  if (!googleProvider) {
+    googleProvider = new GoogleAuthProvider();
+    googleProvider.addScope('email');
+    googleProvider.addScope('profile');
+  }
+  return googleProvider;
+};
+
 export const signInWithGoogle = async () => {
   if (Platform.OS !== 'web') {
-    throw new Error('Google Sign-In via popup is only supported on web');
+    throw new Error('Google Sign-In via popup is only supported on web.');
   }
+
+  if (!isFirebaseConfigured()) {
+    throw new Error('Firebase is not configured. Please check your environment variables.');
+  }
+
   try {
-    const result = await signInWithPopup(auth, googleProvider, browserPopupRedirectResolver);
+    const firebaseAuth = getFirebaseAuth();
+    const provider = getGoogleProvider();
+    const result = await signInWithPopup(firebaseAuth, provider, browserPopupRedirectResolver);
     const user = result.user;
     return {
       uid: user.uid,
@@ -59,13 +85,14 @@ export const signInWithGoogle = async () => {
   }
 };
 
-// Sign out function
 export const signOutFromFirebase = async () => {
   try {
-    await auth.signOut();
+    if (auth) {
+      await auth.signOut();
+    }
   } catch (error) {
     console.error('Sign out error:', error);
   }
 };
 
-export { auth, googleProvider };
+export { getFirebaseAuth as auth, getGoogleProvider as googleProvider };

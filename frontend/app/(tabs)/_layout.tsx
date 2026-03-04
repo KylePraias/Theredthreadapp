@@ -90,21 +90,21 @@ export default function TabsLayout() {
         name="event/[id]"
         options={{
           href: null,
-          headerTitle: 'Event Details',
+          headerShown: false,
         }}
       />
       <Tabs.Screen
         name="edit-event/[id]"
         options={{
           href: null,
-          headerTitle: 'Edit Event',
+          headerShown: false,
         }}
       />
       <Tabs.Screen
         name="organization/[id]"
         options={{
           href: null,
-          headerTitle: 'Organization',
+          headerShown: false,
         }}
       />
     </Tabs>

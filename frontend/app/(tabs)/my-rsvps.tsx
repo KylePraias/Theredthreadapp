@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,9 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { eventsApi } from '../../src/api/events';
 
@@ -72,9 +73,12 @@ export default function MyRsvpsScreen() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchRsvps();
-  }, [fetchRsvps]);
+  // Refresh data whenever the screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchRsvps();
+    }, [fetchRsvps])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -124,7 +128,10 @@ export default function MyRsvpsScreen() {
     return (
       <TouchableOpacity
         style={[styles.eventCard, !upcoming && styles.pastEventCard]}
-        onPress={() => router.push(`/(tabs)/event/${item.event.id}`)}
+        onPress={() => router.push({
+          pathname: '/(tabs)/event/[id]',
+          params: { id: item.event.id, from: 'rsvps' }
+        })}
       >
         {!upcoming && (
           <View style={styles.pastBadge}>
@@ -176,7 +183,16 @@ export default function MyRsvpsScreen() {
   return (
     <View style={styles.container}>
       {rsvps.length === 0 ? (
-        <View style={styles.emptyContainer}>
+        <ScrollView
+          contentContainerStyle={styles.emptyContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#d32f2f"
+            />
+          }
+        >
           <Ionicons name="bookmark-outline" size={60} color="#333" />
           <Text style={styles.emptyText}>No RSVPs yet</Text>
           <Text style={styles.emptySubtext}>
@@ -188,7 +204,7 @@ export default function MyRsvpsScreen() {
           >
             <Text style={styles.browseButtonText}>Browse Events</Text>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
       ) : (
         <FlatList
           data={rsvps}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,9 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { eventsApi } from '../../src/api/events';
 import { useAuthStore } from '../../src/store/authStore';
@@ -47,9 +48,12 @@ export default function MyEventsScreen() {
     }
   }, [user]);
 
-  useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
+  // Refresh data whenever the screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchEvents();
+    }, [fetchEvents])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -128,7 +132,10 @@ export default function MyEventsScreen() {
         <View style={styles.actionButtons}>
           <TouchableOpacity
             style={styles.viewButton}
-            onPress={() => router.push(`/(tabs)/event/${item.id}`)}
+            onPress={() => router.push({
+              pathname: '/(tabs)/event/[id]',
+              params: { id: item.id, from: 'my-events' }
+            })}
           >
             <Ionicons name="eye-outline" size={18} color="#fff" />
             <Text style={styles.viewButtonText}>View</Text>
@@ -137,7 +144,10 @@ export default function MyEventsScreen() {
             <>
               <TouchableOpacity
                 style={styles.editButton}
-                onPress={() => router.push(`/(tabs)/edit-event/${item.id}`)}
+                onPress={() => router.push({
+                  pathname: '/(tabs)/edit-event/[id]',
+                  params: { id: item.id, from: 'my-events' }
+                })}
               >
                 <Ionicons name="pencil-outline" size={18} color="#d32f2f" />
                 <Text style={styles.editButtonText}>Edit</Text>
@@ -174,13 +184,22 @@ export default function MyEventsScreen() {
       </TouchableOpacity>
 
       {events.length === 0 ? (
-        <View style={styles.emptyContainer}>
+        <ScrollView
+          contentContainerStyle={styles.emptyContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#d32f2f"
+            />
+          }
+        >
           <Ionicons name="megaphone-outline" size={60} color="#333" />
           <Text style={styles.emptyText}>No events yet</Text>
           <Text style={styles.emptySubtext}>
             Create your first event to start organizing
           </Text>
-        </View>
+        </ScrollView>
       ) : (
         <FlatList
           data={events}

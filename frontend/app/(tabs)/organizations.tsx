@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -64,7 +65,10 @@ export default function OrganizationsScreen() {
   const renderOrganization = ({ item }: { item: Organization }) => (
     <TouchableOpacity
       style={styles.orgCard}
-      onPress={() => router.push(`/(tabs)/organization/${item.id}` as any)}
+      onPress={() => router.push({
+        pathname: '/(tabs)/organization/[id]',
+        params: { id: item.id, from: 'organizations' }
+      })}
     >
       <View style={styles.orgHeader}>
         <View style={styles.orgAvatar}>
@@ -109,13 +113,22 @@ export default function OrganizationsScreen() {
   return (
     <View style={styles.container}>
       {organizations.length === 0 ? (
-        <View style={styles.emptyContainer}>
+        <ScrollView
+          contentContainerStyle={styles.emptyContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor="#d32f2f"
+            />
+          }
+        >
           <Ionicons name="people-outline" size={60} color="#333" />
           <Text style={styles.emptyText}>No organizations yet</Text>
           <Text style={styles.emptySubtext}>
             Organizations will appear here once they sign up
           </Text>
-        </View>
+        </ScrollView>
       ) : (
         <FlatList
           data={organizations}

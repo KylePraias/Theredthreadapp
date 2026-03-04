@@ -1,13 +1,14 @@
 import React, { useEffect } from 'react';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../src/store/authStore';
-import { View, ActivityIndicator, StyleSheet, Platform, AppState } from 'react-native'
+import { View, ActivityIndicator, StyleSheet, Platform, AppState, BackHandler } from 'react-native'
 import * as NavigationBar from 'expo-navigation-bar';
 
 function AuthGuard() {
-  const { user, isInitialized } = useAuthStore();
+  const { user, isInitialized, isLoggingOut } = useAuthStore();
   const router = useRouter();
+  const pathname = usePathname();
   const [ready, setReady] = React.useState(false);
 
   useEffect(() => {
@@ -16,10 +17,39 @@ function AuthGuard() {
   }, []);
 
   useEffect(() => {
+    // Only redirect to welcome if:
+    // 1. Auth is initialized
+    // 2. No user exists
+    // 3. Component is ready
+    // 4. User is logging out OR was never logged in
     if (isInitialized && !user && ready) {
       router.replace('/welcome');
     }
-  }, [user, isInitialized, ready]);
+  }, [user, isInitialized, ready, isLoggingOut]);
+
+  // Handle Android hardware back button
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // If user is not logged in and on welcome page, exit app
+      if (!user && (pathname === '/welcome' || pathname === '/')) {
+        BackHandler.exitApp();
+        return true;
+      }
+
+      // If on main tabs (index pages), don't go back further
+      if (pathname === '/' || pathname === '/index' || pathname === '/(tabs)' || pathname === '/(tabs)/index') {
+        // Stay on the current page or exit app
+        return true;
+      }
+
+      // Let default back behavior work - router.back() will be called
+      return false;
+    });
+
+    return () => backHandler.remove();
+  }, [user, pathname]);
 
   return null;
 }
