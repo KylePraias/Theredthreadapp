@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,12 +10,22 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
+import * as Crypto from 'expo-crypto';
 import { authApi } from '../../src/api/auth';
 import { useAuthStore } from '../../src/store/authStore';
-import { isFirebaseConfigured } from '../../src/config/firebase';
+import { firebaseConfig, isFirebaseConfigured } from '../../src/config/firebase';
+
+// Enable web browser for OAuth
+WebBrowser.maybeCompleteAuthSession();
+
+// Google OAuth configuration
+const GOOGLE_CLIENT_ID = '202099205262-...apps.googleusercontent.com'; // Web client ID needed
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -24,6 +34,12 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  
+  // Forgot password modal state
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   const handleLogin = async () => {
     if (!email || !password) {
@@ -53,16 +69,114 @@ export default function LoginScreen() {
     }
   };
 
+  const handleForgotPassword = async () => {
+    if (!forgotEmail) {
+      Alert.alert('Error', 'Please enter your email address');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      await authApi.forgotPassword(forgotEmail);
+      Alert.alert(
+        'Check Your Email',
+        'If an account with that email exists, a password reset link has been sent. Please check your inbox.',
+        [{ text: 'OK', onPress: () => setShowForgotPassword(false) }]
+      );
+      setForgotEmail('');
+    } catch (error: any) {
+      const message = error.response?.data?.detail || 'Failed to send reset email. Please try again.';
+      Alert.alert('Error', message);
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     if (!isFirebaseConfigured()) {
       Alert.alert(
         'Firebase Not Configured',
-        'Google Sign-In requires Firebase configuration. Please add your Firebase credentials to the .env file.'
+        'Google Sign-In requires Firebase configuration. Please ensure Firebase is properly set up.'
       );
       return;
     }
-    // Firebase Google Sign-In would be implemented here
-    Alert.alert('Coming Soon', 'Google Sign-In will be available once Firebase is configured.');
+
+    setIsGoogleLoading(true);
+    try {
+      // Generate nonce for security
+      const nonce = await Crypto.randomUUID();
+      const hashedNonce = await Crypto.digestStringAsync(
+        Crypto.CryptoDigestAlgorithm.SHA256,
+        nonce
+      );
+
+      // Create OAuth discovery document for Google
+      const discovery = {
+        authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+        tokenEndpoint: 'https://oauth2.googleapis.com/token',
+      };
+
+      // Get redirect URI
+      const redirectUri = AuthSession.makeRedirectUri({
+        scheme: 'com.redthread.app',
+        path: 'auth',
+      });
+
+      // Create auth request
+      const authRequest = new AuthSession.AuthRequest({
+        clientId: firebaseConfig.apiKey ? '202099205262-YOUR_WEB_CLIENT_ID.apps.googleusercontent.com' : '',
+        redirectUri,
+        scopes: ['openid', 'profile', 'email'],
+        responseType: AuthSession.ResponseType.Token,
+        extraParams: {
+          nonce: hashedNonce,
+        },
+      });
+
+      // Prompt for authentication
+      const result = await authRequest.promptAsync(discovery);
+
+      if (result.type === 'success') {
+        const { access_token } = result.params;
+        
+        // Get user info from Google
+        const userInfoResponse = await fetch(
+          `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${access_token}`
+        );
+        const userInfo = await userInfoResponse.json();
+
+        // Sign in with our backend
+        try {
+          const response = await authApi.googleSignInIndividual({
+            firebase_uid: userInfo.id,
+            email: userInfo.email,
+            display_name: userInfo.name || userInfo.email.split('@')[0],
+            profile_image: userInfo.picture,
+          });
+
+          await login(response.access_token, response.user);
+          
+          // Route based on user type
+          if (response.user.user_type === 'organization' && response.user.approval_status === 'pending') {
+            router.replace('/(auth)/pending-approval');
+          } else if (response.user.user_type === 'organization' && response.user.approval_status === 'rejected') {
+            router.replace('/(auth)/rejected');
+          } else {
+            router.replace('/(tabs)');
+          }
+        } catch (apiError: any) {
+          const message = apiError.response?.data?.detail || 'Failed to complete sign-in.';
+          Alert.alert('Error', message);
+        }
+      } else if (result.type === 'error') {
+        Alert.alert('Error', result.error?.message || 'Google Sign-In failed');
+      }
+    } catch (error: any) {
+      console.log('Google Sign-In Error:', error);
+      Alert.alert('Error', 'Google Sign-In is not available. Please use email/password to sign in.');
+    } finally {
+      setIsGoogleLoading(false);
+    }
   };
 
   return (
@@ -114,6 +228,13 @@ export default function LoginScreen() {
             </TouchableOpacity>
           </View>
 
+          <TouchableOpacity 
+            style={styles.forgotPasswordButton}
+            onPress={() => setShowForgotPassword(true)}
+          >
+            <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.loginButton}
             onPress={handleLogin}
@@ -132,9 +253,19 @@ export default function LoginScreen() {
             <View style={styles.dividerLine} />
           </View>
 
-          <TouchableOpacity style={styles.googleButton} onPress={handleGoogleSignIn}>
-            <Ionicons name="logo-google" size={20} color="#fff" />
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
+          <TouchableOpacity 
+            style={styles.googleButton} 
+            onPress={handleGoogleSignIn}
+            disabled={isGoogleLoading}
+          >
+            {isGoogleLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <>
+                <Ionicons name="logo-google" size={20} color="#fff" />
+                <Text style={styles.googleButtonText}>Continue with Google</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -145,6 +276,65 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Forgot Password Modal */}
+      <Modal
+        visible={showForgotPassword}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowForgotPassword(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Reset Password</Text>
+              <TouchableOpacity 
+                onPress={() => setShowForgotPassword(false)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={24} color="#888" />
+              </TouchableOpacity>
+            </View>
+            
+            <Text style={styles.modalDescription}>
+              Enter your email address and we'll send you a link to reset your password.
+            </Text>
+
+            <View style={styles.modalInputContainer}>
+              <Ionicons name="mail-outline" size={20} color="#888" style={styles.inputIcon} />
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                placeholderTextColor="#666"
+                value={forgotEmail}
+                onChangeText={setForgotEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalButton}
+              onPress={handleForgotPassword}
+              disabled={forgotLoading}
+            >
+              {forgotLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.modalButtonText}>Send Reset Link</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.modalCancelButton}
+              onPress={() => setShowForgotPassword(false)}
+            >
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -194,6 +384,15 @@ const styles = StyleSheet.create({
     flex: 1,
     color: '#fff',
     fontSize: 16,
+  },
+  forgotPasswordButton: {
+    alignSelf: 'flex-end',
+    marginTop: -8,
+  },
+  forgotPasswordText: {
+    color: '#d32f2f',
+    fontSize: 14,
+    fontWeight: '500',
   },
   loginButton: {
     backgroundColor: '#d32f2f',
@@ -252,5 +451,73 @@ const styles = StyleSheet.create({
     color: '#d32f2f',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalContent: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalDescription: {
+    color: '#888',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 20,
+  },
+  modalInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0c0c0c',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    height: 56,
+    borderWidth: 1,
+    borderColor: '#333',
+    marginBottom: 16,
+  },
+  modalButton: {
+    backgroundColor: '#d32f2f',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  modalButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalCancelButton: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  modalCancelText: {
+    color: '#888',
+    fontSize: 16,
   },
 });

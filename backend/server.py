@@ -176,6 +176,14 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    token: str
+    new_password: str
+
 class VerificationCode(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     email: EmailStr
@@ -875,6 +883,12 @@ async def google_sign_in_individual(data: GoogleSignIn):
         
         if email_docs:
             existing = deserialize_from_firestore(email_docs[0].to_dict())
+            # Check if account uses email auth
+            if existing.get('auth_provider') == 'email':
+                raise HTTPException(
+                    status_code=400, 
+                    detail="An account with this email already exists. Please sign in with your email and password instead."
+                )
             # Update firebase_uid if needed
             if not existing.get('firebase_uid'):
                 db.collection('users').document(email_docs[0].id).update({
@@ -926,6 +940,12 @@ async def google_sign_in_organization(data: GoogleOrgSignIn):
         
         if email_docs:
             user_dict = deserialize_from_firestore(email_docs[0].to_dict())
+            # Check if account uses email auth
+            if user_dict.get('auth_provider') == 'email':
+                raise HTTPException(
+                    status_code=400, 
+                    detail="An account with this email already exists. Please sign in with your email and password instead."
+                )
             user = User(**user_dict)
         else:
             # Create new organization user
@@ -978,6 +998,274 @@ async def change_password(data: ChangePasswordRequest, current_user: User = Depe
         db.collection('users').document(user_docs[0].id).update({'password_hash': new_hash})
     
     return MessageResponse(message="Password changed successfully")
+
+@api_router.post("/auth/forgot-password", response_model=MessageResponse)
+async def forgot_password(data: ForgotPasswordRequest):
+    """Send password reset email"""
+    # Find user by email
+    users_ref = db.collection('users')
+    user_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if not user_docs:
+        # Don't reveal if email exists
+        return MessageResponse(message="If an account with that email exists, a password reset link will be sent.")
+    
+    user_dict = deserialize_from_firestore(user_docs[0].to_dict())
+    
+    # Check if it's a Google account
+    if user_dict.get('auth_provider') == 'google':
+        raise HTTPException(
+            status_code=400, 
+            detail="This account uses Google Sign-In. Please sign in with Google instead."
+        )
+    
+    # Generate reset token
+    import secrets
+    reset_token = secrets.token_urlsafe(32)
+    
+    # Store reset token in Firestore
+    db.collection('password_reset_tokens').add({
+        'email': data.email,
+        'token': reset_token,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+        'expires_at': (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        'used': False
+    })
+    
+    # Send reset email via Gmail SMTP
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        gmail_address = os.environ.get('GMAIL_ADDRESS')
+        gmail_password = os.environ.get('GMAIL_APP_PASSWORD')
+        
+        if not gmail_address or not gmail_password:
+            raise HTTPException(status_code=500, detail="Email service not configured")
+        
+        base_url = os.environ.get('BASE_URL', 'https://theredthreadapp-backend-202099205262.us-east4.run.app')
+        reset_link = f"{base_url}/api/auth/reset-password-page?token={reset_token}&email={data.email}"
+        
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = "Reset Your Red Thread Password"
+        msg['From'] = gmail_address
+        msg['To'] = data.email
+        
+        html_body = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2>Password Reset Request</h2>
+            <p>We received a request to reset your password for your Red Thread account.</p>
+            <p>Click the button below to reset your password:</p>
+            <a href="{reset_link}" 
+               style="background-color: #d32f2f; color: white; padding: 12px 24px; 
+                      text-decoration: none; border-radius: 6px; display: inline-block; margin: 20px 0;">
+                Reset Password
+            </a>
+            <p>Or copy and paste this link into your browser:</p>
+            <p style="word-break: break-all;">{reset_link}</p>
+            <p>This link expires in 1 hour.</p>
+            <p>If you didn't request this, you can safely ignore this email.</p>
+        </div>
+        """
+        
+        msg.attach(MIMEText(html_body, 'html'))
+        
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(gmail_address, gmail_password)
+            server.send_message(msg)
+        
+        logger.info("Password reset email sent to: %s", data.email)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to send password reset email: %s", str(e))
+        raise HTTPException(status_code=500, detail="Failed to send password reset email")
+    
+    return MessageResponse(message="If an account with that email exists, a password reset link will be sent.")
+
+@api_router.get("/auth/reset-password-page")
+async def reset_password_page(token: str, email: str):
+    """Display password reset form"""
+    # Verify token exists and is valid
+    tokens_ref = db.collection('password_reset_tokens')
+    query = tokens_ref.where(filter=FieldFilter('email', '==', email)).where(filter=FieldFilter('token', '==', token)).where(filter=FieldFilter('used', '==', False)).limit(1)
+    token_docs = list(query.stream())
+    
+    if not token_docs:
+        return HTMLResponse("""
+            <div style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                <h2 style="color: #d32f2f;">❌ Invalid or Expired Link</h2>
+                <p>This password reset link is invalid or has already been used.</p>
+                <p>Please request a new password reset from the app.</p>
+            </div>
+        """)
+    
+    token_data = deserialize_from_firestore(token_docs[0].to_dict())
+    expires_at = token_data.get('expires_at')
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+    if datetime.now(timezone.utc) > expires_at:
+        return HTMLResponse("""
+            <div style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
+                <h2 style="color: #d32f2f;">❌ Link Expired</h2>
+                <p>This password reset link has expired.</p>
+                <p>Please request a new password reset from the app.</p>
+            </div>
+        """)
+    
+    return HTMLResponse(f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Reset Password - Red Thread</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; background-color: #0c0c0c; color: #fff; margin: 0; padding: 20px; }}
+                .container {{ max-width: 400px; margin: 50px auto; padding: 30px; background-color: #1a1a1a; border-radius: 16px; }}
+                h2 {{ color: #d32f2f; text-align: center; margin-bottom: 30px; }}
+                .form-group {{ margin-bottom: 20px; }}
+                label {{ display: block; margin-bottom: 8px; color: #888; }}
+                input {{ width: 100%; padding: 14px; border: 1px solid #333; border-radius: 8px; background-color: #0c0c0c; color: #fff; font-size: 16px; box-sizing: border-box; }}
+                button {{ width: 100%; padding: 16px; background-color: #d32f2f; color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; margin-top: 10px; }}
+                button:hover {{ background-color: #b71c1c; }}
+                .requirements {{ font-size: 13px; color: #888; margin-top: 8px; }}
+                .requirement {{ display: flex; align-items: center; gap: 6px; margin-top: 4px; }}
+                .requirement.valid {{ color: #4caf50; }}
+                .error {{ color: #f44336; text-align: center; margin-top: 15px; }}
+                .success {{ color: #4caf50; text-align: center; margin-top: 15px; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2>Reset Your Password</h2>
+                <form id="resetForm">
+                    <div class="form-group">
+                        <label>New Password</label>
+                        <input type="password" id="password" required minlength="8" />
+                        <div class="requirements">
+                            <div class="requirement" id="length">✗ At least 8 characters</div>
+                            <div class="requirement" id="number">✗ At least one number</div>
+                            <div class="requirement" id="special">✗ At least one special character</div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Confirm Password</label>
+                        <input type="password" id="confirmPassword" required />
+                    </div>
+                    <button type="submit">Reset Password</button>
+                    <div id="message"></div>
+                </form>
+            </div>
+            <script>
+                const password = document.getElementById('password');
+                const lengthReq = document.getElementById('length');
+                const numberReq = document.getElementById('number');
+                const specialReq = document.getElementById('special');
+                
+                password.addEventListener('input', () => {{
+                    const val = password.value;
+                    lengthReq.className = 'requirement' + (val.length >= 8 ? ' valid' : '');
+                    lengthReq.textContent = (val.length >= 8 ? '✓' : '✗') + ' At least 8 characters';
+                    numberReq.className = 'requirement' + (/\\d/.test(val) ? ' valid' : '');
+                    numberReq.textContent = (/\\d/.test(val) ? '✓' : '✗') + ' At least one number';
+                    specialReq.className = 'requirement' + (/[!@#$%^&*(),.?":{{}}|<>]/.test(val) ? ' valid' : '');
+                    specialReq.textContent = (/[!@#$%^&*(),.?":{{}}|<>]/.test(val) ? '✓' : '✗') + ' At least one special character';
+                }});
+                
+                document.getElementById('resetForm').addEventListener('submit', async (e) => {{
+                    e.preventDefault();
+                    const pwd = document.getElementById('password').value;
+                    const confirm = document.getElementById('confirmPassword').value;
+                    const messageEl = document.getElementById('message');
+                    
+                    if (pwd !== confirm) {{
+                        messageEl.className = 'error';
+                        messageEl.textContent = 'Passwords do not match';
+                        return;
+                    }}
+                    
+                    if (pwd.length < 8 || !/\\d/.test(pwd) || !/[!@#$%^&*(),.?":{{}}|<>]/.test(pwd)) {{
+                        messageEl.className = 'error';
+                        messageEl.textContent = 'Password does not meet requirements';
+                        return;
+                    }}
+                    
+                    try {{
+                        const res = await fetch('/api/auth/reset-password', {{
+                            method: 'POST',
+                            headers: {{ 'Content-Type': 'application/json' }},
+                            body: JSON.stringify({{ email: '{email}', token: '{token}', new_password: pwd }})
+                        }});
+                        const data = await res.json();
+                        if (res.ok) {{
+                            messageEl.className = 'success';
+                            messageEl.textContent = 'Password reset successfully! You can now log in with your new password.';
+                            document.getElementById('resetForm').style.display = 'none';
+                        }} else {{
+                            messageEl.className = 'error';
+                            messageEl.textContent = data.detail || 'Failed to reset password';
+                        }}
+                    }} catch (err) {{
+                        messageEl.className = 'error';
+                        messageEl.textContent = 'An error occurred. Please try again.';
+                    }}
+                }});
+            </script>
+        </body>
+        </html>
+    """)
+
+@api_router.post("/auth/reset-password", response_model=MessageResponse)
+async def reset_password(data: ResetPasswordRequest):
+    """Reset password using token from email"""
+    # Validate password
+    is_valid, error_message = validate_password(data.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_message)
+    
+    # Find and validate token
+    tokens_ref = db.collection('password_reset_tokens')
+    query = tokens_ref.where(filter=FieldFilter('email', '==', data.email)).where(filter=FieldFilter('token', '==', data.token)).where(filter=FieldFilter('used', '==', False)).limit(1)
+    token_docs = list(query.stream())
+    
+    if not token_docs:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    
+    token_data = deserialize_from_firestore(token_docs[0].to_dict())
+    
+    # Check expiration
+    expires_at = token_data.get('expires_at')
+    if isinstance(expires_at, str):
+        expires_at = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+    if datetime.now(timezone.utc) > expires_at:
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+    
+    # Mark token as used
+    token_docs[0].reference.update({'used': True})
+    
+    # Update user password
+    users_ref = db.collection('users')
+    user_query = users_ref.where(filter=FieldFilter('email', '==', data.email)).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if not user_docs:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    new_hash = hash_password(data.new_password)
+    db.collection('users').document(user_docs[0].id).update({'password_hash': new_hash})
+    
+    # Also update Firebase Auth password
+    try:
+        firebase_user = firebase_auth.get_user_by_email(data.email)
+        firebase_auth.update_user(firebase_user.uid, password=data.new_password)
+    except Exception as e:
+        logger.warning("Could not update Firebase Auth password: %s", str(e))
+    
+    logger.info("Password reset successful for: %s", data.email)
+    return MessageResponse(message="Password reset successfully")
 
 # ============== USER ROUTES ==============
 

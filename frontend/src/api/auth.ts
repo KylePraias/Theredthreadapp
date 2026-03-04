@@ -76,6 +76,11 @@ export const authApi = {
     return response.data;
   },
 
+  forgotPassword: async (email: string) => {
+    const response = await apiClient.post('/auth/forgot-password', { email });
+    return response.data;
+  },
+
   googleSignInIndividual: async (data: GoogleSignInData) => {
     const response = await apiClient.post('/auth/google/individual', data);
     return response.data;
