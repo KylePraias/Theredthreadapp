@@ -18,7 +18,7 @@
         "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#000"
       },
-      "edgeToEdgeEnabled": true 
+      "edgeToEdgeEnabled": true
     },
     "web": {
       "bundler": "metro",
@@ -36,6 +36,12 @@
           "backgroundColor": "#000"
         }
       ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow RedThread to use your location to find nearby events."
+        }
+      ],
       "@react-native-community/datetimepicker",
       "expo-font",
       "expo-secure-store",
@@ -48,7 +54,8 @@
       "router": {},
       "eas": {
         "projectId": "cb87dacf-49f3-4f08-8839-e9c50c51856f"
-      }
+      },
+      "googleMapsApiKey": "AIzaSyC7Ed_SKD9HULQs5MOkeZ5myl2buzv6Sog"
     }
   }
 }
