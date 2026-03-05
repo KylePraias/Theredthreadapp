@@ -6,6 +6,8 @@ export interface EventCreateData {
   contact_email?: string;
   date: string;
   location: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface EventUpdateData {
@@ -14,6 +16,8 @@ export interface EventUpdateData {
   contact_email?: string;
   date?: string;
   location?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export const eventsApi = {

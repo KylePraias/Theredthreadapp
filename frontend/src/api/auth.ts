@@ -6,6 +6,8 @@ export interface IndividualRegisterData {
   display_name: string;
   bio?: string;
   interests?: string[];
+  country: string;
+  city?: string;
 }
 
 export interface OrganizationRegisterData {
@@ -17,6 +19,8 @@ export interface OrganizationRegisterData {
   website?: string;
   social_links?: Record<string, string>;
   areas_of_focus?: string[];
+  country: string;
+  city?: string;
 }
 
 export interface LoginData {

@@ -105,6 +105,8 @@ class IndividualProfile(BaseModel):
     bio: Optional[str] = None
     interests: Optional[List[str]] = []
     profile_image: Optional[str] = None  # Base64
+    country: Optional[str] = None
+    city: Optional[str] = None
 
 # Organization Profile
 class OrganizationProfile(BaseModel):
@@ -115,6 +117,8 @@ class OrganizationProfile(BaseModel):
     social_links: Optional[dict] = {}  # {platform: url}
     areas_of_focus: Optional[List[str]] = []
     logo: Optional[str] = None  # Base64
+    country: Optional[str] = None
+    city: Optional[str] = None
 
 # Full User Document
 class User(UserBase):
@@ -132,6 +136,8 @@ class IndividualRegister(BaseModel):
     display_name: str
     bio: Optional[str] = None
     interests: Optional[List[str]] = []
+    country: str  # Required
+    city: Optional[str] = None
 
 class OrganizationRegister(BaseModel):
     email: EmailStr
@@ -142,6 +148,8 @@ class OrganizationRegister(BaseModel):
     website: Optional[str] = None
     social_links: Optional[dict] = {}
     areas_of_focus: Optional[List[str]] = []
+    country: str  # Required
+    city: Optional[str] = None
 
 class GoogleSignIn(BaseModel):
     firebase_uid: str
@@ -199,6 +207,8 @@ class EventCreate(BaseModel):
     contact_email: Optional[EmailStr] = None
     date: datetime
     location: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 class Event(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -209,6 +219,8 @@ class Event(BaseModel):
     contact_email: Optional[EmailStr] = None
     date: datetime
     location: str
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
@@ -220,6 +232,8 @@ class EventUpdate(BaseModel):
     contact_email: Optional[EmailStr] = None
     date: Optional[datetime] = None
     location: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 # RSVP Models
 class RSVP(BaseModel):
@@ -594,7 +608,9 @@ async def register_individual(data: IndividualRegister):
         individual_profile=IndividualProfile(
             display_name=data.display_name,
             bio=data.bio,
-            interests=data.interests or []
+            interests=data.interests or [],
+            country=data.country,
+            city=data.city
         )
     )
     db.collection('users').document(user.id).set(
@@ -650,7 +666,9 @@ async def register_organization(data: OrganizationRegister):
             contact_email=data.contact_email,
             website=data.website,
             social_links=data.social_links or {},
-            areas_of_focus=data.areas_of_focus or []
+            areas_of_focus=data.areas_of_focus or [],
+            country=data.country,
+            city=data.city
         )
     )
     db.collection('users').document(user.id).set(

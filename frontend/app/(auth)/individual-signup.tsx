@@ -10,11 +10,14 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Modal,
+  FlatList,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { authApi } from '../../src/api/auth';
 import { storage } from '../../src/utils/storage';
+import { COUNTRIES } from '../../src/constants/countries';
 
 // Password validation helper
 const validatePassword = (password: string) => {
@@ -36,13 +39,24 @@ export default function IndividualSignupScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [bio, setBio] = useState('');
+  const [country, setCountry] = useState('');
+  const [city, setCity] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [showCountryPicker, setShowCountryPicker] = useState(false);
+  const [countrySearch, setCountrySearch] = useState('');
 
   const passwordValidation = useMemo(() => validatePassword(password), [password]);
 
+  const filteredCountries = useMemo(() => {
+    if (!countrySearch) return COUNTRIES;
+    return COUNTRIES.filter(c => 
+      c.toLowerCase().includes(countrySearch.toLowerCase())
+    );
+  }, [countrySearch]);
+
   const handleSignup = async () => {
-    if (!displayName || !email || !password) {
+    if (!displayName || !email || !password || !country) {
       Alert.alert('Error', 'Please fill in all required fields');
       return;
     }
@@ -64,6 +78,8 @@ export default function IndividualSignupScreen() {
         password,
         display_name: displayName,
         bio: bio || undefined,
+        country,
+        city: city || undefined,
       });
       
       // Save email for verification completion
@@ -80,6 +96,22 @@ export default function IndividualSignupScreen() {
       setIsLoading(false);
     }
   };
+
+  const renderCountryItem = ({ item }: { item: string }) => (
+    <TouchableOpacity
+      style={styles.countryItem}
+      onPress={() => {
+        setCountry(item);
+        setShowCountryPicker(false);
+        setCountrySearch('');
+      }}
+    >
+      <Text style={styles.countryItemText}>{item}</Text>
+      {country === item && (
+        <Ionicons name="checkmark" size={20} color="#d32f2f" />
+      )}
+    </TouchableOpacity>
+  );
 
   return (
     <KeyboardAvoidingView
@@ -193,6 +225,31 @@ export default function IndividualSignupScreen() {
             </View>
           )}
 
+          {/* Country Picker */}
+          <TouchableOpacity 
+            style={styles.inputContainer}
+            onPress={() => setShowCountryPicker(true)}
+          >
+            <Ionicons name="globe-outline" size={20} color="#888" style={styles.inputIcon} />
+            <Text style={[styles.input, !country && styles.placeholderText]}>
+              {country || 'Select Country *'}
+            </Text>
+            <Ionicons name="chevron-down" size={20} color="#888" />
+          </TouchableOpacity>
+
+          {/* City Input */}
+          <View style={styles.inputContainer}>
+            <Ionicons name="location-outline" size={20} color="#888" style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="City (optional)"
+              placeholderTextColor="#666"
+              value={city}
+              onChangeText={setCity}
+              autoCapitalize="words"
+            />
+          </View>
+
           <View style={[styles.inputContainer, styles.textAreaContainer]}>
             <TextInput
               style={[styles.input, styles.textArea]}
@@ -223,6 +280,43 @@ export default function IndividualSignupScreen() {
           A verification link will be sent to your email
         </Text>
       </ScrollView>
+
+      {/* Country Picker Modal */}
+      <Modal
+        visible={showCountryPicker}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCountryPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Country</Text>
+              <TouchableOpacity onPress={() => setShowCountryPicker(false)}>
+                <Ionicons name="close" size={24} color="#888" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="#888" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search countries..."
+                placeholderTextColor="#666"
+                value={countrySearch}
+                onChangeText={setCountrySearch}
+                autoCapitalize="none"
+              />
+            </View>
+            <FlatList
+              data={filteredCountries}
+              renderItem={renderCountryItem}
+              keyExtractor={(item) => item}
+              style={styles.countryList}
+              showsVerticalScrollIndicator={true}
+            />
+          </View>
+        </View>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -285,6 +379,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
   },
+  placeholderText: {
+    color: '#666',
+  },
   textArea: {
     height: 76,
   },
@@ -331,5 +428,65 @@ const styles = StyleSheet.create({
   },
   requirementMet: {
     color: '#4caf50',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0c0c0c',
+    margin: 16,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    height: 48,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  searchInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 16,
+    marginLeft: 12,
+  },
+  countryList: {
+    maxHeight: 400,
+  },
+  countryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  countryItemText: {
+    color: '#fff',
+    fontSize: 16,
   },
 });
