@@ -14,7 +14,8 @@ export default function DeveloperLayout() {
         name="index"
         options={{
           title: 'Developer Settings',
-          headerTitle: 'Developer Panel',
+          headerBackVisible: false,
+          headerLeft: () => null,
         }}
       />
     </Stack>

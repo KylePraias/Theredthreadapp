@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   Modal,
+  FlatList,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuthStore } from '../../src/store/authStore';
 import { authApi } from '../../src/api/auth';
 import { InlineRoleBadge } from '../../src/components/RoleBadge';
+import { COUNTRIES } from '../../src/constants/countries';
+import { UPDATE_LOG, APP_VERSION, UpdateLogEntry } from '../../src/constants/updateLog';
 
 export default function SettingsScreen() {
   const router = useRouter();
@@ -24,6 +27,9 @@ export default function SettingsScreen() {
   const [showPasswordChange, setShowPasswordChange] = useState(false);
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [showBugReport, setShowBugReport] = useState(false);
+  const [showUpdateLog, setShowUpdateLog] = useState(false);
+  const [showCountryPicker, setShowCountryPicker] = useState(false);
+  const [countrySearch, setCountrySearch] = useState('');
   const [bugReportText, setBugReportText] = useState('');
   const [isSubmittingBugReport, setIsSubmittingBugReport] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -34,6 +40,12 @@ export default function SettingsScreen() {
 
   const [displayName, setDisplayName] = useState(user?.individual_profile?.display_name || '');
   const [bio, setBio] = useState(user?.individual_profile?.bio || '');
+  const [country, setCountry] = useState(
+    user?.individual_profile?.country || user?.organization_profile?.country || ''
+  );
+  const [city, setCity] = useState(
+    user?.individual_profile?.city || user?.organization_profile?.city || ''
+  );
 
   const [orgDescription, setOrgDescription] = useState(user?.organization_profile?.description || '');
   const [orgWebsite, setOrgWebsite] = useState(user?.organization_profile?.website || '');
@@ -42,6 +54,29 @@ export default function SettingsScreen() {
     user?.organization_profile?.areas_of_focus?.join(', ') || ''
   );
 
+  const filteredCountries = useMemo(() => {
+    if (!countrySearch) return COUNTRIES;
+    return COUNTRIES.filter(c => 
+      c.toLowerCase().includes(countrySearch.toLowerCase())
+    );
+  }, [countrySearch]);
+
+  // Reset password form helper
+  const resetPasswordForm = () => {
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+  };
+
+  // Toggle password change with reset
+  const togglePasswordChange = () => {
+    if (showPasswordChange) {
+      // Closing the form - reset fields
+      resetPasswordForm();
+    }
+    setShowPasswordChange(!showPasswordChange);
+  };
+
   const handleLogout = async () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
@@ -49,6 +84,7 @@ export default function SettingsScreen() {
         text: 'Sign Out',
         style: 'destructive',
         onPress: async () => {
+          // Logout will clear user state, and AuthGuard will redirect to welcome
           await logout();
         },
       },
@@ -80,9 +116,7 @@ export default function SettingsScreen() {
       await authApi.changePassword(currentPassword, newPassword);
       Alert.alert('Success', 'Password changed successfully');
       setShowPasswordChange(false);
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
+      resetPasswordForm();
     } catch (error: any) {
       const message = error.response?.data?.detail || 'Failed to change password';
       Alert.alert('Error', message);
@@ -105,11 +139,15 @@ export default function SettingsScreen() {
           website: orgWebsite || undefined,
           contact_email: orgContactEmail,
           areas_of_focus: areasArray,
+          country: country || undefined,
+          city: city || undefined,
         });
       } else {
         await authApi.updateIndividualProfile({
           display_name: displayName,
           bio: bio || undefined,
+          country: country || undefined,
+          city: city || undefined,
         });
       }
 
@@ -180,7 +218,51 @@ export default function SettingsScreen() {
     }
   };
 
+  const getLocationDisplay = () => {
+    const userCountry = user?.individual_profile?.country || user?.organization_profile?.country;
+    const userCity = user?.individual_profile?.city || user?.organization_profile?.city;
+    
+    if (userCity && userCountry) {
+      return `${userCity}, ${userCountry}`;
+    }
+    if (userCountry) {
+      return userCountry;
+    }
+    return 'Not set';
+  };
+
   const isIndividualLike = user?.user_type === 'individual' || user?.user_type === 'admin' || user?.user_type === 'developer';
+
+  const renderCountryItem = ({ item }: { item: string }) => (
+    <TouchableOpacity
+      style={styles.countryItem}
+      onPress={() => {
+        setCountry(item);
+        setShowCountryPicker(false);
+        setCountrySearch('');
+      }}
+    >
+      <Text style={styles.countryItemText}>{item}</Text>
+      {country === item && (
+        <Ionicons name="checkmark" size={20} color="#d32f2f" />
+      )}
+    </TouchableOpacity>
+  );
+
+  const renderUpdateLogItem = ({ item }: { item: UpdateLogEntry }) => (
+    <View style={styles.updateLogEntry}>
+      <View style={styles.updateLogHeader}>
+        <Text style={styles.updateLogVersion}>v{item.version}</Text>
+        <Text style={styles.updateLogDate}>{item.date}</Text>
+      </View>
+      {item.changes.map((change, index) => (
+        <View key={index} style={styles.changeRow}>
+          <Text style={styles.changeBullet}>•</Text>
+          <Text style={styles.changeText}>{change}</Text>
+        </View>
+      ))}
+    </View>
+  );
 
   return (
     <KeyboardAvoidingView
@@ -205,6 +287,17 @@ export default function SettingsScreen() {
           <Text style={styles.email}>{user?.email}</Text>
           <View style={[styles.badge, { backgroundColor: `${getUserTypeColor()}20` }]}>
             <Text style={[styles.badgeText, { color: getUserTypeColor() }]}>{getUserTypeLabel()}</Text>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Location</Text>
+          <View style={styles.menuItem}>
+            <View style={styles.menuItemLeft}>
+              <Ionicons name="location-outline" size={24} color="#888" />
+              <Text style={styles.menuItemText}>Location</Text>
+            </View>
+            <Text style={styles.menuItemValue}>{getLocationDisplay()}</Text>
           </View>
         </View>
 
@@ -291,6 +384,30 @@ export default function SettingsScreen() {
                   />
                 </>
               )}
+
+              {/* Country Picker */}
+              <Text style={styles.inputLabel}>Country</Text>
+              <TouchableOpacity 
+                style={styles.pickerButton}
+                onPress={() => setShowCountryPicker(true)}
+              >
+                <Text style={[styles.pickerButtonText, !country && styles.placeholderText]}>
+                  {country || 'Select Country'}
+                </Text>
+                <Ionicons name="chevron-down" size={20} color="#888" />
+              </TouchableOpacity>
+
+              {/* City Input */}
+              <Text style={styles.inputLabel}>City (optional)</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Your city"
+                placeholderTextColor="#666"
+                value={city}
+                onChangeText={setCity}
+                autoCapitalize="words"
+              />
+
               <TouchableOpacity
                 style={styles.saveButton}
                 onPress={handleUpdateProfile}
@@ -312,7 +429,7 @@ export default function SettingsScreen() {
           {user?.auth_provider === 'email' && (
             <TouchableOpacity
               style={styles.menuItem}
-              onPress={() => setShowPasswordChange(!showPasswordChange)}
+              onPress={togglePasswordChange}
             >
               <View style={styles.menuItemLeft}>
                 <Ionicons name="lock-closed-outline" size={24} color="#888" />
@@ -430,8 +547,19 @@ export default function SettingsScreen() {
               <Ionicons name="information-circle-outline" size={24} color="#888" />
               <Text style={styles.menuItemText}>Version</Text>
             </View>
-            <Text style={styles.menuItemValue}>1.0.0</Text>
+            <Text style={styles.menuItemValue}>{APP_VERSION}</Text>
           </View>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => setShowUpdateLog(true)}
+          >
+            <View style={styles.menuItemLeft}>
+              <Ionicons name="document-text-outline" size={24} color="#4caf50" />
+              <Text style={styles.menuItemText}>Update Log</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#888" />
+          </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.menuItem}
@@ -451,6 +579,74 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </ScrollView>
 
+      {/* Country Picker Modal */}
+      <Modal
+        visible={showCountryPicker}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowCountryPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Country</Text>
+              <TouchableOpacity onPress={() => setShowCountryPicker(false)}>
+                <Ionicons name="close" size={24} color="#888" />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="#888" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search countries..."
+                placeholderTextColor="#666"
+                value={countrySearch}
+                onChangeText={setCountrySearch}
+                autoCapitalize="none"
+              />
+            </View>
+            <FlatList
+              data={filteredCountries}
+              renderItem={renderCountryItem}
+              keyExtractor={(item) => item}
+              style={styles.countryList}
+              showsVerticalScrollIndicator={true}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Update Log Modal */}
+      <Modal
+        visible={showUpdateLog}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowUpdateLog(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.updateLogModalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Update Log</Text>
+              <TouchableOpacity
+                style={styles.modalCloseButton}
+                onPress={() => setShowUpdateLog(false)}
+              >
+                <Ionicons name="close" size={24} color="#888" />
+              </TouchableOpacity>
+            </View>
+
+            <FlatList
+              data={UPDATE_LOG}
+              renderItem={renderUpdateLogItem}
+              keyExtractor={(item) => item.version}
+              contentContainerStyle={styles.updateLogList}
+              showsVerticalScrollIndicator={true}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Bug Report Modal */}
       <Modal
         visible={showBugReport}
         animationType="slide"
@@ -458,7 +654,7 @@ export default function SettingsScreen() {
         onRequestClose={() => setShowBugReport(false)}
       >
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={styles.bugReportModalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Report a Bug</Text>
               <TouchableOpacity
@@ -603,6 +799,8 @@ const styles = StyleSheet.create({
   menuItemValue: {
     color: '#888',
     fontSize: 14,
+    maxWidth: 180,
+    textAlign: 'right',
   },
   editContainer: {
     backgroundColor: '#1a1a1a',
@@ -628,6 +826,23 @@ const styles = StyleSheet.create({
   textArea: {
     minHeight: 100,
     textAlignVertical: 'top',
+  },
+  pickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0c0c0c',
+    borderRadius: 8,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  pickerButtonText: {
+    color: '#fff',
+    fontSize: 16,
+  },
+  placeholderText: {
+    color: '#666',
   },
   saveButton: {
     backgroundColor: '#d32f2f',
@@ -705,28 +920,41 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+    justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: '#1a1a1a',
-    borderRadius: 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  bugReportModalContent: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     padding: 24,
-    width: '100%',
-    maxWidth: 400,
+  },
+  updateLogModalContent: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+    paddingBottom: 20,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
   },
   modalTitle: {
     color: '#fff',
     fontSize: 20,
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
   modalCloseButton: {
     padding: 4,
@@ -780,5 +1008,82 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '600',
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0c0c0c',
+    margin: 16,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    height: 48,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  searchInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 16,
+    marginLeft: 12,
+  },
+  countryList: {
+    maxHeight: 400,
+  },
+  countryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  countryItemText: {
+    color: '#fff',
+    fontSize: 16,
+  },
+  updateLogList: {
+    padding: 16,
+  },
+  updateLogEntry: {
+    backgroundColor: '#0c0c0c',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+  updateLogHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  updateLogVersion: {
+    color: '#d32f2f',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  updateLogDate: {
+    color: '#888',
+    fontSize: 14,
+  },
+  changeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 4,
+  },
+  changeBullet: {
+    color: '#4caf50',
+    fontSize: 14,
+    marginRight: 8,
+    lineHeight: 20,
+  },
+  changeText: {
+    color: '#ccc',
+    fontSize: 14,
+    flex: 1,
+    lineHeight: 20,
   },
 });

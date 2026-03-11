@@ -13,6 +13,7 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { eventsApi } from '../../src/api/events';
+import { useAuthStore } from '../../src/store/authStore';
 
 interface Event {
   id: string;
@@ -40,11 +41,19 @@ interface RSVPWithEvent {
 
 export default function MyRsvpsScreen() {
   const router = useRouter();
+  const { user } = useAuthStore();
   const [rsvps, setRsvps] = useState<RSVPWithEvent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchRsvps = useCallback(async () => {
+    // Don't fetch if user is not logged in
+    if (!user) {
+      setIsLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    
     try {
       const data = await eventsApi.getMyRsvps();
       const sorted = [...data].sort((a, b) => {
@@ -71,13 +80,15 @@ export default function MyRsvpsScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [user]);
 
   // Refresh data whenever the screen comes into focus
   useFocusEffect(
     useCallback(() => {
-      fetchRsvps();
-    }, [fetchRsvps])
+      if (user) {
+        fetchRsvps();
+      }
+    }, [user, fetchRsvps])
   );
 
   const onRefresh = () => {

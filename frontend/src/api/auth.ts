@@ -109,7 +109,7 @@ export const authApi = {
   },
 
   // Profile update methods
-  updateIndividualProfile: async (data: { display_name?: string; bio?: string }) => {
+  updateIndividualProfile: async (data: { display_name?: string; bio?: string; country?: string; city?: string }) => {
     const response = await apiClient.patch('/users/me/individual', data);
     return response.data;
   },
@@ -119,6 +119,8 @@ export const authApi = {
     areas_of_focus?: string[];
     website?: string;
     contact_email?: string;
+    country?: string;
+    city?: string;
   }) => {
     const response = await apiClient.patch('/users/me/organization', data);
     return response.data;

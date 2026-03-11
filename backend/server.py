@@ -15,6 +15,8 @@ import random
 import string
 import requests
 from fastapi.responses import HTMLResponse
+import asyncio
+from contextlib import asynccontextmanager
 
 import re
 
@@ -64,8 +66,9 @@ def validate_password(password: str) -> tuple[bool, str]:
 # Security
 security = HTTPBearer()
 
-# Create the main app
-app = FastAPI(title="Mutual Aid & Event Organizing API")
+# Placeholder for lifespan - will be properly defined later in the file
+# This is a workaround since lifespan needs to reference db and logger which are defined after imports
+lifespan = None
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -1291,12 +1294,16 @@ async def reset_password(data: ResetPasswordRequest):
 class IndividualProfileUpdate(BaseModel):
     display_name: Optional[str] = None
     bio: Optional[str] = None
+    country: Optional[str] = None
+    city: Optional[str] = None
 
 class OrganizationProfileUpdate(BaseModel):
     description: Optional[str] = None
     areas_of_focus: Optional[List[str]] = None
     website: Optional[str] = None
     contact_email: Optional[EmailStr] = None
+    country: Optional[str] = None
+    city: Optional[str] = None
 
 @api_router.get("/users/me", response_model=UserResponse)
 async def get_current_user_profile(current_user: User = Depends(get_current_user)):
@@ -1348,6 +1355,10 @@ async def partial_update_individual_profile(
         current_profile['display_name'] = profile_update.display_name
     if profile_update.bio is not None:
         current_profile['bio'] = profile_update.bio
+    if profile_update.country is not None:
+        current_profile['country'] = profile_update.country
+    if profile_update.city is not None:
+        current_profile['city'] = profile_update.city
     
     db.collection('users').document(user_docs[0].id).update({
         'individual_profile': current_profile
@@ -1407,6 +1418,10 @@ async def partial_update_organization_profile(
         current_profile['website'] = profile_update.website
     if profile_update.contact_email is not None:
         current_profile['contact_email'] = profile_update.contact_email
+    if profile_update.country is not None:
+        current_profile['country'] = profile_update.country
+    if profile_update.city is not None:
+        current_profile['city'] = profile_update.city
     
     db.collection('users').document(user_docs[0].id).update({
         'organization_profile': current_profile
@@ -1901,6 +1916,257 @@ async def submit_bug_report(
     except Exception as e:
         logger.error("Failed to submit bug report: %s", str(e))
         raise HTTPException(status_code=500, detail="Failed to submit bug report. Please try again later.")
+
+# ============== DATABASE CLEANUP ==============
+
+# Flag to control the cleanup task
+cleanup_task_running = False
+
+def parse_datetime(dt_value) -> datetime:
+    """Parse datetime from various formats (Firestore timestamp, ISO string, datetime)"""
+    if dt_value is None:
+        return None
+    if hasattr(dt_value, 'timestamp'):
+        # Firestore timestamp
+        return datetime.fromtimestamp(dt_value.timestamp(), tz=timezone.utc)
+    elif isinstance(dt_value, str):
+        # ISO string format
+        return datetime.fromisoformat(dt_value.replace('Z', '+00:00'))
+    elif isinstance(dt_value, datetime):
+        return dt_value.replace(tzinfo=timezone.utc) if dt_value.tzinfo is None else dt_value
+    return None
+
+async def cleanup_database():
+    """
+    Cleanup expired/old data from the database:
+    - Delete email_verification_tokens that are expired (expires_at < now) OR used OR older than 24 hours
+    - Delete password_reset_tokens that are expired (expires_at < now) OR used OR older than 24 hours
+    - Delete events that are 24+ hours past their event date
+    - Delete RSVPs for events that are 24+ hours past their event date
+    """
+    global cleanup_task_running
+    
+    while cleanup_task_running:
+        try:
+            logger.info("Starting database cleanup task...")
+            now = datetime.now(timezone.utc)
+            cutoff_time = now - timedelta(hours=24)
+            deleted_counts = {
+                'email_verification_tokens': 0,
+                'password_reset_tokens': 0,
+                'events': 0,
+                'rsvps': 0
+            }
+            
+            # 1. Delete old/expired/used email verification tokens
+            try:
+                tokens = db.collection('email_verification_tokens').stream()
+                for token_doc in tokens:
+                    token_data = token_doc.to_dict()
+                    should_delete = False
+                    
+                    # Delete if used
+                    if token_data.get('used') == True:
+                        should_delete = True
+                    
+                    # Delete if expired
+                    expires_at = parse_datetime(token_data.get('expires_at'))
+                    if expires_at and expires_at < now:
+                        should_delete = True
+                    
+                    # Delete if created_at is older than 24 hours
+                    created_at = parse_datetime(token_data.get('created_at'))
+                    if created_at and created_at < cutoff_time:
+                        should_delete = True
+                    
+                    if should_delete:
+                        db.collection('email_verification_tokens').document(token_doc.id).delete()
+                        deleted_counts['email_verification_tokens'] += 1
+            except Exception as e:
+                logger.error(f"Error cleaning email_verification_tokens: {e}")
+
+            # 2. Delete old/expired/used password reset tokens
+            try:
+                tokens = db.collection('password_reset_tokens').stream()
+                for token_doc in tokens:
+                    token_data = token_doc.to_dict()
+                    should_delete = False
+                    
+                    # Delete if used
+                    if token_data.get('used') == True:
+                        should_delete = True
+                    
+                    # Delete if expired
+                    expires_at = parse_datetime(token_data.get('expires_at'))
+                    if expires_at and expires_at < now:
+                        should_delete = True
+                    
+                    # Delete if created_at is older than 24 hours
+                    created_at = parse_datetime(token_data.get('created_at'))
+                    if created_at and created_at < cutoff_time:
+                        should_delete = True
+                    
+                    if should_delete:
+                        db.collection('password_reset_tokens').document(token_doc.id).delete()
+                        deleted_counts['password_reset_tokens'] += 1
+            except Exception as e:
+                logger.error(f"Error cleaning password_reset_tokens: {e}")
+
+            # 3. Delete old events (24+ hours past event date)
+            try:
+                events = db.collection('events').stream()
+                expired_event_ids = []
+                for event_doc in events:
+                    event_data = event_doc.to_dict()
+                    event_date = parse_datetime(event_data.get('date'))
+                    
+                    if event_date and event_date < cutoff_time:
+                        expired_event_ids.append(event_doc.id)
+                        db.collection('events').document(event_doc.id).delete()
+                        deleted_counts['events'] += 1
+                
+                # 4. Delete RSVPs for expired events
+                for event_id in expired_event_ids:
+                    try:
+                        rsvps = db.collection('rsvps').where('event_id', '==', event_id).stream()
+                        for rsvp_doc in rsvps:
+                            db.collection('rsvps').document(rsvp_doc.id).delete()
+                            deleted_counts['rsvps'] += 1
+                    except Exception as e:
+                        logger.error(f"Error deleting RSVPs for event {event_id}: {e}")
+                        
+            except Exception as e:
+                logger.error(f"Error cleaning events/rsvps: {e}")
+
+            logger.info(f"Database cleanup completed. Deleted: {deleted_counts}")
+            
+        except Exception as e:
+            logger.error(f"Database cleanup task error: {e}")
+        
+        # Wait 24 hours before next cleanup
+        await asyncio.sleep(24 * 60 * 60)  # 24 hours in seconds
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for startup and shutdown events"""
+    global cleanup_task_running
+    
+    # Startup
+    cleanup_task_running = True
+    cleanup_task = asyncio.create_task(cleanup_database())
+    logger.info("Database cleanup task started - will run every 24 hours")
+    
+    yield
+    
+    # Shutdown
+    cleanup_task_running = False
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Database cleanup task stopped")
+
+
+# Create the main app with lifespan handler
+app = FastAPI(title="Mutual Aid & Event Organizing API", lifespan=lifespan)
+
+
+# Manual cleanup endpoint for admins/developers
+@api_router.post("/admin/cleanup-database")
+async def manual_cleanup_database(current_user: User = Depends(get_current_user)):
+    """Manually trigger database cleanup (admin/developer only)"""
+    if current_user.user_type not in ['admin', 'developer']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    
+    try:
+        now = datetime.now(timezone.utc)
+        cutoff_time = now - timedelta(hours=24)
+        deleted_counts = {
+            'email_verification_tokens': 0,
+            'password_reset_tokens': 0,
+            'events': 0,
+            'rsvps': 0
+        }
+        
+        # 1. Delete old/expired/used email verification tokens
+        tokens = db.collection('email_verification_tokens').stream()
+        for token_doc in tokens:
+            token_data = token_doc.to_dict()
+            should_delete = False
+            
+            # Delete if used
+            if token_data.get('used') == True:
+                should_delete = True
+            
+            # Delete if expired
+            expires_at = parse_datetime(token_data.get('expires_at'))
+            if expires_at and expires_at < now:
+                should_delete = True
+            
+            # Delete if created_at is older than 24 hours
+            created_at = parse_datetime(token_data.get('created_at'))
+            if created_at and created_at < cutoff_time:
+                should_delete = True
+            
+            if should_delete:
+                db.collection('email_verification_tokens').document(token_doc.id).delete()
+                deleted_counts['email_verification_tokens'] += 1
+
+        # 2. Delete old/expired/used password reset tokens
+        tokens = db.collection('password_reset_tokens').stream()
+        for token_doc in tokens:
+            token_data = token_doc.to_dict()
+            should_delete = False
+            
+            # Delete if used
+            if token_data.get('used') == True:
+                should_delete = True
+            
+            # Delete if expired
+            expires_at = parse_datetime(token_data.get('expires_at'))
+            if expires_at and expires_at < now:
+                should_delete = True
+            
+            # Delete if created_at is older than 24 hours
+            created_at = parse_datetime(token_data.get('created_at'))
+            if created_at and created_at < cutoff_time:
+                should_delete = True
+            
+            if should_delete:
+                db.collection('password_reset_tokens').document(token_doc.id).delete()
+                deleted_counts['password_reset_tokens'] += 1
+
+        # 3. Delete old events
+        events = db.collection('events').stream()
+        expired_event_ids = []
+        for event_doc in events:
+            event_data = event_doc.to_dict()
+            event_date = parse_datetime(event_data.get('date'))
+            
+            if event_date and event_date < cutoff_time:
+                expired_event_ids.append(event_doc.id)
+                db.collection('events').document(event_doc.id).delete()
+                deleted_counts['events'] += 1
+        
+        # 4. Delete RSVPs for expired events
+        for event_id in expired_event_ids:
+            rsvps = db.collection('rsvps').where('event_id', '==', event_id).stream()
+            for rsvp_doc in rsvps:
+                db.collection('rsvps').document(rsvp_doc.id).delete()
+                deleted_counts['rsvps'] += 1
+        
+        logger.info(f"Manual database cleanup by {current_user.email}. Deleted: {deleted_counts}")
+        return {
+            "message": "Database cleanup completed",
+            "deleted": deleted_counts
+        }
+        
+    except Exception as e:
+        logger.error(f"Manual database cleanup error: {e}")
+        raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
+
 
 # ============== HEALTH CHECK ==============
 

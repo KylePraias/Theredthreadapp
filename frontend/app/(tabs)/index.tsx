@@ -143,6 +143,13 @@ export default function EventsScreen() {
   }, [userLocation, maxDistance, sortBy, sortOrder]);
 
   const fetchEvents = useCallback(async () => {
+    // Don't fetch if user is not logged in
+    if (!user) {
+      setIsLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    
     try {
       const data = await eventsApi.getEvents(sortBy === 'distance' ? 'date' : sortBy, sortOrder, true);
       setEvents(data);
@@ -153,11 +160,14 @@ export default function EventsScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  }, [sortBy, sortOrder, applyDistanceFilter]);
+  }, [user, sortBy, sortOrder, applyDistanceFilter]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchEvents();
+      // Only fetch if user is logged in
+      if (user) {
+        fetchEvents();
+      }
     }, [sortBy, sortOrder])
   );
 

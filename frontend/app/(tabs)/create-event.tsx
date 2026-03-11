@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   FlatList,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { eventsApi } from '../../src/api/events';
@@ -45,6 +46,33 @@ export default function CreateEventScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Reset form function
+  const resetForm = useCallback(() => {
+    setName('');
+    setDescription('');
+    setContactEmail('');
+    setLocation('');
+    setLatitude(null);
+    setLongitude(null);
+    setDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
+    setShowDatePicker(false);
+    setShowTimePicker(false);
+    setShowLocationModal(false);
+    setLocationSearch('');
+    setPredictions([]);
+  }, []);
+
+  // Reset form when screen loses focus (user navigates away)
+  useFocusEffect(
+    useCallback(() => {
+      // Called when screen is focused
+      return () => {
+        // Called when screen is unfocused (navigating away)
+        resetForm();
+      };
+    }, [resetForm])
+  );
+
   const handleCreate = async () => {
     if (!name || !description || !location) {
       Alert.alert('Error', 'Please fill in all required fields');
@@ -73,6 +101,10 @@ export default function CreateEventScreen() {
         latitude: latitude || undefined,
         longitude: longitude || undefined,
       });
+      
+      // Reset form after successful creation
+      resetForm();
+      
       Alert.alert('Success', 'Event created successfully', [
         { text: 'OK', onPress: () => router.back() },
       ]);

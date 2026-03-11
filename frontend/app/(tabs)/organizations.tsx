@@ -12,6 +12,7 @@ import {
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import apiClient from '../../src/api/client';
+import { useAuthStore } from '../../src/store/authStore';
 
 interface OrganizationProfile {
   name: string;
@@ -35,11 +36,19 @@ interface Organization {
 
 export default function OrganizationsScreen() {
   const router = useRouter();
+  const { user } = useAuthStore();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchOrganizations = useCallback(async () => {
+    // Don't fetch if user is not logged in
+    if (!user) {
+      setIsLoading(false);
+      setRefreshing(false);
+      return;
+    }
+    
     try {
       const response = await apiClient.get('/organizations');
       setOrganizations(response.data);
@@ -49,12 +58,14 @@ export default function OrganizationsScreen() {
       setIsLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [user]);
 
   useFocusEffect(
     useCallback(() => {
-      fetchOrganizations();
-    }, [])
+      if (user) {
+        fetchOrganizations();
+      }
+    }, [user, fetchOrganizations])
   );
 
   const onRefresh = () => {

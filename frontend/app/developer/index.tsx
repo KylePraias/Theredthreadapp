@@ -26,13 +26,17 @@ export default function DeveloperScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    if (user?.user_type !== 'developer') {
+    // Only redirect if user exists but is not a developer
+    // Don't redirect if user is null (logging out) - let AuthGuard handle that
+    if (user && user.user_type !== 'developer') {
       const timeout = setTimeout(() => {
         router.replace('/(tabs)');
       }, 0);
       return () => clearTimeout(timeout);
     }
-    loadAllUsers();
+    if (user?.user_type === 'developer') {
+      loadAllUsers();
+    }
   }, [user]);
 
   const loadAllUsers = async () => {
@@ -204,8 +208,8 @@ export default function DeveloperScreen() {
             <Text style={styles.developerEmail}>{user?.email}</Text>
           </View>
         </View>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.push('/(tabs)')}>
-          <Ionicons name="home-outline" size={20} color="#888" />
+        <TouchableOpacity style={styles.backButton} onPress={() => router.push('/(tabs)/settings')}>
+          <Ionicons name="arrow-back" size={20} color="#888" />
         </TouchableOpacity>
       </View>
 

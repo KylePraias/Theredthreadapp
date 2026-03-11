@@ -10,7 +10,14 @@ export default function AdminLayout() {
         contentStyle: { backgroundColor: '#0c0c0c' },
       }}
     >
-      <Stack.Screen name="index" options={{ title: 'Admin Dashboard' }} />
+      <Stack.Screen
+        name="index"
+        options={{
+          title: 'Admin Dashboard',
+          headerBackVisible: false,
+          headerLeft: () => null,
+        }}
+      />
     </Stack>
   );
 }

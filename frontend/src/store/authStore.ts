@@ -7,6 +7,8 @@ export interface IndividualProfile {
   bio?: string;
   interests?: string[];
   profile_image?: string;
+  country?: string;
+  city?: string;
 }
 
 export interface OrganizationProfile {
@@ -17,6 +19,8 @@ export interface OrganizationProfile {
   social_links?: Record<string, string>;
   areas_of_focus?: string[];
   logo?: string;
+  country?: string;
+  city?: string;
 }
 
 export interface User {
