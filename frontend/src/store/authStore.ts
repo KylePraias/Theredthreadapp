@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { storage } from '../utils/storage';
 import { authApi } from '../api/auth';
+import { setOnAccountDisabled } from '../api/client';
 
 export interface IndividualProfile {
   display_name: string;
@@ -34,6 +35,9 @@ export interface User {
   individual_profile?: IndividualProfile;
   organization_profile?: OrganizationProfile;
   created_at: string;
+  is_disabled?: boolean;
+  disable_reason?: string;
+  disable_count?: number;
 }
 
 interface AuthState {
@@ -42,12 +46,15 @@ interface AuthState {
   isLoading: boolean;
   isInitialized: boolean;
   isLoggingOut: boolean;
+  disabledReason: string | null;
   setUser: (user: User | null) => void;
   setToken: (token: string | null) => void;
   login: (token: string, user: User) => Promise<void>;
   logout: () => Promise<void>;
   initialize: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  handleAccountDisabled: (reason: string) => void;
+  clearDisabledReason: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -56,22 +63,45 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isLoading: true,
   isInitialized: false,
   isLoggingOut: false,
+  disabledReason: null,
 
   setUser: (user) => set({ user }),
   setToken: (token) => set({ token }),
 
   login: async (token, user) => {
     await storage.setItem('auth_token', token);
-    set({ token, user, isLoading: false, isLoggingOut: false });
+    set({ token, user, isLoading: false, isLoggingOut: false, disabledReason: null });
   },
 
- logout: async () => {
-  set({ isLoggingOut: true });
-  await storage.deleteItem('auth_token');
-  set({ token: null, user: null, isLoggingOut: false });
-},
+  logout: async () => {
+    set({ isLoggingOut: true });
+    await storage.deleteItem('auth_token');
+    set({ token: null, user: null, isLoggingOut: false });
+  },
+
+  handleAccountDisabled: (reason: string) => {
+    // This is called when the API returns ACCOUNT_DISABLED
+    // It will log out the user and store the reason
+    set({ 
+      token: null, 
+      user: null, 
+      disabledReason: reason,
+      isLoggingOut: false 
+    });
+  },
+
+  clearDisabledReason: () => {
+    set({ disabledReason: null });
+  },
 
   initialize: async () => {
+    const { handleAccountDisabled } = get();
+    
+    // Set up the callback for when account is disabled
+    setOnAccountDisabled((reason) => {
+      handleAccountDisabled(reason);
+    });
+
     set({ isLoggingOut: false });
     try {
       const token = await storage.getItem('auth_token');
@@ -81,8 +111,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       } else {
         set({ isLoading: false, isInitialized: true });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.log('Failed to initialize auth:', error);
+      
+      // Check if the error is due to disabled account
+      const errorDetail = error.response?.data?.detail;
+      if (typeof errorDetail === 'object' && errorDetail.code === 'ACCOUNT_DISABLED') {
+        handleAccountDisabled(errorDetail.reason || 'Your account has been disabled');
+      }
+      
       await storage.deleteItem('auth_token');
       set({ token: null, user: null, isLoading: false, isInitialized: true });
     }
@@ -92,8 +129,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       const user = await authApi.getCurrentUser();
       set({ user });
-    } catch (error) {
+    } catch (error: any) {
       console.log('Failed to refresh user:', error);
+      
+      // Check if the error is due to disabled account
+      const errorDetail = error.response?.data?.detail;
+      if (typeof errorDetail === 'object' && errorDetail.code === 'ACCOUNT_DISABLED') {
+        get().handleAccountDisabled(errorDetail.reason || 'Your account has been disabled');
+      }
     }
   },
 }));

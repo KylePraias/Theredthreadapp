@@ -37,7 +37,7 @@ interface Organization {
 
 export default function AdminDashboardScreen() {
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
   const [pendingOrgs, setPendingOrgs] = useState<Organization[]>([]);
   const [allOrgs, setAllOrgs] = useState<Organization[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -129,11 +129,6 @@ export default function AdminDashboardScreen() {
         },
       ]
     );
-  };
-
-  const handleLogout = async () => {
-    await logout();
-    router.replace('/');
   };
 
   const getStatusColor = (status: string) => {
@@ -443,12 +438,30 @@ export default function AdminDashboardScreen() {
             <Ionicons name="shield-checkmark" size={24} color="#d32f2f" />
           </View>
           <View>
-            <Text style={styles.adminTitle}>Admin Panel</Text>
+            <Text style={styles.adminTitle}>Organization Approvals</Text>
             <Text style={styles.adminEmail}>{user?.email}</Text>
           </View>
         </View>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={20} color="#888" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Navigation to other admin pages */}
+      <View style={styles.adminNav}>
+        <TouchableOpacity 
+          style={styles.navButton}
+          onPress={() => router.push('/admin/users')}
+        >
+          <Ionicons name="people" size={20} color="#fff" />
+          <Text style={styles.navButtonText}>User Management</Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.navButton}
+          onPress={() => router.push('/admin/appeals')}
+        >
+          <Ionicons name="document-text" size={20} color="#fff" />
+          <Text style={styles.navButtonText}>Appeals</Text>
         </TouchableOpacity>
       </View>
 
@@ -573,9 +586,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stats: {
+  adminNav: {
     flexDirection: 'row',
     padding: 16,
+    gap: 12,
+  },
+  navButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#d32f2f',
+    paddingVertical: 12,
+    borderRadius: 8,
+    gap: 8,
+  },
+  navButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  stats: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingBottom: 16,
     gap: 12,
   },
   statCard: {

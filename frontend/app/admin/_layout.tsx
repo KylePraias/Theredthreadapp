@@ -13,9 +13,22 @@ export default function AdminLayout() {
       <Stack.Screen
         name="index"
         options={{
-          title: 'Admin Dashboard',
-          headerBackVisible: false,
-          headerLeft: () => null,
+          title: 'Organization Approvals',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="users"
+        options={{
+          title: 'User Management',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="appeals"
+        options={{
+          title: 'Appeals',
+          headerShown: false,
         }}
       />
     </Stack>

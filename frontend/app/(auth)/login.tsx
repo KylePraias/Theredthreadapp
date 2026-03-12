@@ -14,10 +14,16 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import * as AuthSession from 'expo-auth-session';
 import { authApi } from '../../src/api/auth';
+import { submitAppeal } from '../../src/api/admin';
 import { useAuthStore } from '../../src/store/authStore';
-import { isFirebaseConfigured } from '../../src/config/firebase';
+
+interface DisabledAccountInfo {
+  reason: string;
+  email: string;
+  hasPendingAppeal: boolean;
+  disableCount: number;
+}
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -26,7 +32,13 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  
+  // Disabled account modal state
+  const [showDisabledModal, setShowDisabledModal] = useState(false);
+  const [disabledInfo, setDisabledInfo] = useState<DisabledAccountInfo | null>(null);
+  const [appealMessage, setAppealMessage] = useState('');
+  const [isSubmittingAppeal, setIsSubmittingAppeal] = useState(false);
+  const [appealSubmitted, setAppealSubmitted] = useState(false);
   
   // Forgot password modal state
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -50,14 +62,58 @@ export default function LoginScreen() {
       } else if (response.user.user_type === 'organization' && response.user.approval_status === 'rejected') {
         router.replace('/(auth)/rejected');
       } else {
-        // All users (including admin) go to event feed
         router.replace('/(tabs)');
       }
     } catch (error: any) {
-      const message = error.response?.data?.detail || 'Login failed. Please try again.';
-      Alert.alert('Error', message);
+      // Check if account is disabled
+      const errorDetail = error.response?.data?.detail;
+      
+      if (errorDetail && typeof errorDetail === 'object' && errorDetail.code === 'ACCOUNT_DISABLED') {
+        // can_appeal is false if user has already submitted an appeal (pending or reviewed)
+        const canSubmitAppeal = errorDetail.can_appeal !== false;
+        
+        setDisabledInfo({
+          reason: errorDetail.reason,
+          email: errorDetail.user_email,
+          hasPendingAppeal: errorDetail.has_pending_appeal,
+          disableCount: errorDetail.disable_count,
+        });
+        // Show "appeal submitted" state if they can't appeal (already submitted)
+        setAppealSubmitted(!canSubmitAppeal);
+        setShowDisabledModal(true);
+      } else {
+        const message = typeof errorDetail === 'string' 
+          ? errorDetail 
+          : 'Login failed. Please try again.';
+        Alert.alert('Error', message);
+      }
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSubmitAppeal = async () => {
+    if (!appealMessage.trim()) {
+      Alert.alert('Error', 'Please explain why your account should be re-enabled');
+      return;
+    }
+
+    if (!disabledInfo) return;
+
+    setIsSubmittingAppeal(true);
+    try {
+      await submitAppeal(disabledInfo.email, appealMessage.trim());
+      setAppealSubmitted(true);
+      Alert.alert(
+        'Appeal Submitted',
+        'Your appeal has been submitted successfully. You will receive an email once an admin has reviewed your case.',
+        [{ text: 'OK' }]
+      );
+    } catch (error: any) {
+      const message = error.response?.data?.detail || 'Failed to submit appeal';
+      Alert.alert('Error', message);
+    } finally {
+      setIsSubmittingAppeal(false);
     }
   };
 
@@ -84,88 +140,109 @@ export default function LoginScreen() {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-  if (!isFirebaseConfigured()) {
-    Alert.alert(
-      'Configuration Error',
-      'Firebase is not properly configured. Please check your environment variables.'
-    );
-    return;
-  }
+  const closeDisabledModal = () => {
+    setShowDisabledModal(false);
+    setDisabledInfo(null);
+    setAppealMessage('');
+    setAppealSubmitted(false);
+  };
 
-  setIsGoogleLoading(true);
-  try {
-    const redirectUri = AuthSession.makeRedirectUri({
-      scheme: 'redthread',
-    });
+  const renderDisabledAccountModal = () => (
+    <Modal
+      visible={showDisabledModal}
+      transparent={true}
+      animationType="fade"
+      onRequestClose={closeDisabledModal}
+    >
+      <View style={styles.modalOverlay}>
+        <View style={styles.disabledModalContent}>
+          <View style={styles.modalHeader}>
+            <View style={styles.disabledIconContainer}>
+              <Ionicons name="ban" size={32} color="#f44336" />
+            </View>
+            <Text style={styles.disabledTitle}>Account Disabled</Text>
+            <TouchableOpacity 
+              onPress={closeDisabledModal}
+              style={styles.modalCloseButton}
+            >
+              <Ionicons name="close" size={24} color="#888" />
+            </TouchableOpacity>
+          </View>
 
-    const discovery = await AuthSession.fetchDiscoveryAsync(
-      'https://accounts.google.com'
-    );
+          <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+            <Text style={styles.disabledMessage}>
+              Your account has been disabled by an administrator.
+            </Text>
 
-    const request = new AuthSession.AuthRequest({
-      clientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID!,
-      redirectUri,
-      scopes: ['openid', 'profile', 'email'],
-      responseType: AuthSession.ResponseType.Token,
-    });
+            {disabledInfo && (
+              <>
+                <View style={styles.reasonContainer}>
+                  <Text style={styles.reasonLabel}>Reason for disabling:</Text>
+                  <Text style={styles.reasonText}>{disabledInfo.reason}</Text>
+                </View>
 
-    const result = await request.promptAsync(discovery);
+                {disabledInfo.disableCount > 1 && (
+                  <Text style={styles.disableCountText}>
+                    This account has been disabled {disabledInfo.disableCount} time(s).
+                  </Text>
+                )}
 
-    if (result.type !== 'success') {
-      if (result.type === 'error') {
-        Alert.alert('Error', result.error?.message || 'Google Sign-In failed');
-      }
-      return;
-    }
+                {appealSubmitted ? (
+                  <View style={styles.appealPendingContainer}>
+                    <Ionicons name="time" size={24} color="#ff9800" />
+                    <Text style={styles.appealPendingTitle}>Appeal Under Review</Text>
+                    <Text style={styles.appealPendingText}>
+                      You have already submitted an appeal for this disable. Please wait while an administrator reviews your case. You will receive an email notification with the decision.
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.appealFormContainer}>
+                    <Text style={styles.appealFormTitle}>Submit an Appeal</Text>
+                    <Text style={styles.appealFormDescription}>
+                      If you believe this was a mistake, you can submit an appeal explaining why your account should be re-enabled.
+                    </Text>
 
-    const { access_token } = result.params;
+                    <TextInput
+                      style={styles.appealInput}
+                      placeholder="Explain why your account should be re-enabled..."
+                      placeholderTextColor="#666"
+                      value={appealMessage}
+                      onChangeText={setAppealMessage}
+                      multiline
+                      numberOfLines={5}
+                      textAlignVertical="top"
+                    />
 
-    const userInfoResponse = await fetch(
-      `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${access_token}`
-    );
-    const googleUser = await userInfoResponse.json();
+                    <TouchableOpacity
+                      style={[styles.submitAppealButton, isSubmittingAppeal && styles.buttonDisabled]}
+                      onPress={handleSubmitAppeal}
+                      disabled={isSubmittingAppeal}
+                    >
+                      {isSubmittingAppeal ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <>
+                          <Ionicons name="send" size={20} color="#fff" />
+                          <Text style={styles.submitAppealText}>Submit Appeal</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </>
+            )}
+          </ScrollView>
 
-    if (!googleUser || !googleUser.email) {
-      throw new Error('Failed to get user information from Google');
-    }
-
-    // Send to our backend
-    const response = await authApi.googleSignInIndividual({
-      firebase_uid: googleUser.id,
-      email: googleUser.email,
-      display_name: googleUser.name || googleUser.email.split('@')[0],
-      profile_image: googleUser.picture || undefined,
-    });
-
-    await login(response.access_token, response.user);
-
-    // Route based on user type
-    if (response.user.user_type === 'organization' && response.user.approval_status === 'pending') {
-      router.replace('/(auth)/pending-approval');
-    } else if (response.user.user_type === 'organization' && response.user.approval_status === 'rejected') {
-      router.replace('/(auth)/rejected');
-    } else {
-      router.replace('/(tabs)');
-    }
-  } catch (error: any) {
-    console.log('Google Sign-In Error:', error);
-
-    // Check if it's a backend error about existing account
-    const backendMessage = error.response?.data?.detail;
-    if (backendMessage) {
-      Alert.alert('Sign In Error', backendMessage);
-      return;
-    }
-
-    Alert.alert(
-      'Sign In Error',
-      error.message || 'Failed to sign in with Google. Please try again.'
-    );
-  } finally {
-    setIsGoogleLoading(false);
-  }
-};
+          <TouchableOpacity
+            style={styles.closeModalButton}
+            onPress={closeDisabledModal}
+          >
+            <Text style={styles.closeModalText}>Close</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
 
   return (
     <KeyboardAvoidingView
@@ -234,27 +311,6 @@ export default function LoginScreen() {
               <Text style={styles.loginButtonText}>Sign In</Text>
             )}
           </TouchableOpacity>
-
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
-          <TouchableOpacity 
-            style={styles.googleButton} 
-            onPress={handleGoogleSignIn}
-            disabled={isGoogleLoading}
-          >
-            {isGoogleLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Ionicons name="logo-google" size={20} color="#fff" />
-                <Text style={styles.googleButtonText}>Continue with Google</Text>
-              </>
-            )}
-          </TouchableOpacity>
         </View>
 
         <View style={styles.footer}>
@@ -264,6 +320,9 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Disabled Account Modal */}
+      {renderDisabledAccountModal()}
 
       {/* Forgot Password Modal */}
       <Modal
@@ -275,7 +334,7 @@ export default function LoginScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Reset Password</Text>
+              <Text style={styles.forgotModalTitle}>Reset Password</Text>
               <TouchableOpacity 
                 onPress={() => setShowForgotPassword(false)}
                 style={styles.modalCloseButton}
@@ -394,35 +453,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
   },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: 16,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#333',
-  },
-  dividerText: {
-    color: '#666',
-    paddingHorizontal: 16,
-    fontSize: 14,
-  },
-  googleButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#333',
-    paddingVertical: 16,
-    borderRadius: 12,
-    gap: 12,
-  },
-  googleButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '500',
-  },
   footer: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -443,7 +473,7 @@ const styles = StyleSheet.create({
   // Modal styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
@@ -457,19 +487,152 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
   },
+  disabledModalContent: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '85%',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
   },
-  modalTitle: {
+  disabledIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(244, 67, 54, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disabledTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#f44336',
+    flex: 1,
+    marginLeft: 12,
+  },
+  forgotModalTitle: {
     fontSize: 22,
     fontWeight: 'bold',
     color: '#fff',
   },
   modalCloseButton: {
     padding: 4,
+  },
+  modalScroll: {
+    maxHeight: 400,
+  },
+  disabledMessage: {
+    color: '#aaa',
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 20,
+  },
+  reasonContainer: {
+    backgroundColor: 'rgba(244, 67, 54, 0.1)',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+    borderLeftWidth: 3,
+    borderLeftColor: '#f44336',
+  },
+  reasonLabel: {
+    color: '#f44336',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  reasonText: {
+    color: '#fff',
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  disableCountText: {
+    color: '#888',
+    fontSize: 13,
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  appealPendingContainer: {
+    backgroundColor: 'rgba(255, 152, 0, 0.1)',
+    padding: 20,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  appealPendingTitle: {
+    color: '#ff9800',
+    fontSize: 16,
+    fontWeight: '600',
+    marginTop: 12,
+    marginBottom: 8,
+  },
+  appealPendingText: {
+    color: '#aaa',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  appealFormContainer: {
+    marginTop: 8,
+  },
+  appealFormTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  appealFormDescription: {
+    color: '#888',
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  appealInput: {
+    backgroundColor: '#0c0c0c',
+    borderRadius: 12,
+    padding: 16,
+    color: '#fff',
+    fontSize: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+    minHeight: 120,
+    marginBottom: 16,
+  },
+  submitAppealButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2196f3',
+    paddingVertical: 14,
+    borderRadius: 12,
+    gap: 8,
+  },
+  submitAppealText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  closeModalButton: {
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  closeModalText: {
+    color: '#888',
+    fontSize: 16,
   },
   modalDescription: {
     color: '#888',

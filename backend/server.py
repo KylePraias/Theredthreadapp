@@ -131,6 +131,28 @@ class User(UserBase):
     approval_status: str = "approved"  # For organizations: pending, approved, rejected
     individual_profile: Optional[IndividualProfile] = None
     organization_profile: Optional[OrganizationProfile] = None
+    # Account disable fields
+    is_disabled: bool = False
+    disable_reason: Optional[str] = None
+    disable_count: int = 0
+    disabled_at: Optional[datetime] = None
+    disabled_by: Optional[str] = None  # Admin user ID who disabled
+    token_valid_after: Optional[datetime] = None  # For invalidating existing tokens
+
+# Appeal Model for disabled accounts
+class Appeal(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    user_email: str
+    user_name: str
+    appeal_message: str
+    disable_reason: str  # The reason admin gave for disabling
+    disable_instance: int  # Which disable this appeal is for (matches disable_count)
+    status: str = "pending"  # pending, approved, denied
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    reviewed_at: Optional[datetime] = None
+    reviewed_by: Optional[str] = None  # Admin user ID who reviewed
+    admin_response: Optional[str] = None
 
 # Registration Models
 class IndividualRegister(BaseModel):
@@ -259,6 +281,10 @@ class UserResponse(BaseModel):
     individual_profile: Optional[IndividualProfile] = None
     organization_profile: Optional[OrganizationProfile] = None
     created_at: datetime
+    # Disable fields for admin dashboard
+    is_disabled: bool = False
+    disable_reason: Optional[str] = None
+    disable_count: int = 0
 
 class TokenResponse(BaseModel):
     access_token: str
@@ -267,6 +293,33 @@ class TokenResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     message: str
+
+# Admin request models for user management
+class DisableUserRequest(BaseModel):
+    reason: str
+
+# Appeal submission request model
+class AppealSubmitRequest(BaseModel):
+    appeal_message: str
+
+# Appeal response model
+class AppealResponse(BaseModel):
+    id: str
+    user_id: str
+    user_email: str
+    user_name: str
+    appeal_message: str
+    disable_reason: str
+    disable_instance: int
+    status: str
+    created_at: datetime
+    reviewed_at: Optional[datetime] = None
+    reviewed_by: Optional[str] = None
+    admin_response: Optional[str] = None
+
+# Appeal review request model
+class ReviewAppealRequest(BaseModel):
+    admin_response: Optional[str] = None
 
 # ============== FIRESTORE HELPER FUNCTIONS ==============
 
@@ -326,6 +379,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id: str = payload.get("sub")
+        token_iat = payload.get("iat")  # Token issued at time
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid token")
     except JWTError:
@@ -343,7 +397,29 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     if user_dict is None:
         raise HTTPException(status_code=401, detail="User not found")
     
-    return User(**user_dict)
+    user = User(**user_dict)
+    
+    # Check if the account is disabled - this triggers auto-logout on frontend
+    if getattr(user, 'is_disabled', False):
+        raise HTTPException(
+            status_code=403, 
+            detail={
+                "code": "ACCOUNT_DISABLED",
+                "message": "Your account has been disabled",
+                "reason": getattr(user, 'disable_reason', None) or "No reason provided"
+            }
+        )
+    
+    # Check if token was issued before token_valid_after (invalidated tokens)
+    token_valid_after = getattr(user, 'token_valid_after', None)
+    if token_valid_after:
+        if isinstance(token_valid_after, str):
+            token_valid_after = datetime.fromisoformat(token_valid_after.replace('Z', '+00:00'))
+        token_valid_after_ts = token_valid_after.timestamp() if isinstance(token_valid_after, datetime) else 0
+        if token_iat and token_iat < token_valid_after_ts:
+            raise HTTPException(status_code=401, detail="Token has been invalidated. Please log in again.")
+    
+    return user
 
 async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     """Ensure current user is admin"""
@@ -376,7 +452,10 @@ def user_to_response(user: User) -> UserResponse:
         auth_provider=user.auth_provider,
         individual_profile=user.individual_profile,
         organization_profile=user.organization_profile,
-        created_at=user.created_at
+        created_at=user.created_at,
+        is_disabled=getattr(user, 'is_disabled', False),
+        disable_reason=getattr(user, 'disable_reason', None),
+        disable_count=getattr(user, 'disable_count', 0)
     )
 
 @api_router.get("/auth/verify-email-complete")
@@ -876,6 +955,38 @@ async def login(data: LoginRequest):
     
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Account is deactivated")
+    
+    # Check if account is disabled
+    if getattr(user, 'is_disabled', False):
+        # Check if there's any appeal for this disable instance
+        appeals_ref = db.collection('appeals')
+        disable_count = getattr(user, 'disable_count', 0)
+        appeal_query = appeals_ref.where(filter=FieldFilter('user_id', '==', user.id)).where(filter=FieldFilter('disable_instance', '==', disable_count)).limit(1)
+        appeal_docs = list(appeal_query.stream())
+        
+        has_pending_appeal = False
+        can_appeal = True
+        
+        if appeal_docs:
+            appeal_dict = deserialize_from_firestore(appeal_docs[0].to_dict())
+            if appeal_dict.get('status') == 'pending':
+                has_pending_appeal = True
+                can_appeal = False
+            else:
+                can_appeal = False
+        
+        raise HTTPException(
+            status_code=403, 
+            detail={
+                "code": "ACCOUNT_DISABLED",
+                "message": "Your account has been disabled",
+                "reason": getattr(user, 'disable_reason', None) or "No reason provided",
+                "has_pending_appeal": has_pending_appeal,
+                "can_appeal": can_appeal,
+                "user_email": user.email,
+                "disable_count": disable_count
+            }
+        )
     
     token = create_access_token({"sub": user.id})
     
