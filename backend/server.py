@@ -1593,6 +1593,282 @@ async def get_all_organizations(admin: User = Depends(get_admin_user)):
     
     return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
 
+@api_router.get("/admin/users", response_model=List[UserResponse])
+async def get_all_users_admin(admin: User = Depends(get_admin_user)):
+    """Get all users (admin only)"""
+    users_ref = db.collection('users')
+    docs = users_ref.stream()
+    
+    return [user_to_response(User(**deserialize_from_firestore(doc.to_dict()))) for doc in docs]
+
+@api_router.post("/admin/users/{user_id}/disable", response_model=UserResponse)
+async def disable_user(user_id: str, request: DisableUserRequest, admin: User = Depends(get_admin_user)):
+    """Disable a user account (admin only)"""
+    users_ref = db.collection('users')
+    query = users_ref.where(filter=FieldFilter('id', '==', user_id)).limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user_dict = deserialize_from_firestore(docs[0].to_dict())
+    user = User(**user_dict)
+    
+    # Cannot disable admin or developer accounts
+    if user.user_type in ["admin", "developer"]:
+        raise HTTPException(status_code=400, detail=f"Cannot disable {user.user_type} accounts")
+    
+    # Already disabled
+    if getattr(user, 'is_disabled', False):
+        raise HTTPException(status_code=400, detail="Account is already disabled")
+    
+    # Update user - increment disable count and set disabled
+    disable_count = getattr(user, 'disable_count', 0) + 1
+    update_data = {
+        'is_disabled': True,
+        'disable_reason': request.reason,
+        'disable_count': disable_count,
+        'disabled_at': datetime.now(timezone.utc).isoformat(),
+        'disabled_by': admin.id,
+        'token_valid_after': datetime.now(timezone.utc).isoformat()
+    }
+    
+    db.collection('users').document(docs[0].id).update(update_data)
+    
+    updated_doc = db.collection('users').document(docs[0].id).get()
+    return user_to_response(User(**deserialize_from_firestore(updated_doc.to_dict())))
+
+@api_router.get("/admin/appeals", response_model=List[AppealResponse])
+async def get_appeals(status: Optional[str] = None, admin: User = Depends(get_admin_user)):
+    """Get all appeals (admin only)"""
+    appeals_ref = db.collection('appeals')
+    
+    if status:
+        query = appeals_ref.where(filter=FieldFilter('status', '==', status))
+    else:
+        query = appeals_ref
+    
+    docs = query.stream()
+    appeals = []
+    for doc in docs:
+        appeal_dict = deserialize_from_firestore(doc.to_dict())
+        appeals.append(AppealResponse(**appeal_dict))
+    
+    # Sort by created_at descending (most recent first)
+    appeals.sort(key=lambda x: x.created_at, reverse=True)
+    return appeals
+
+async def send_appeal_decision_email(user_email: str, user_name: str, is_approved: bool, admin_response: Optional[str] = None):
+    """Send email notification to user about their appeal decision"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        
+        gmail_address = os.environ.get('GMAIL_ADDRESS')
+        gmail_password = os.environ.get('GMAIL_APP_PASSWORD')
+        
+        if not gmail_address or not gmail_password:
+            logger.warning("Gmail credentials not configured, skipping appeal decision email")
+            return False
+        
+        msg = MIMEMultipart('alternative')
+        msg['From'] = gmail_address
+        msg['To'] = user_email
+        
+        if is_approved:
+            msg['Subject'] = "Your Red Thread Appeal Has Been Approved"
+            status_color = "#4caf50"
+            status_text = "Approved"
+            status_message = "Great news! Your appeal has been approved and your account has been re-enabled. You can now log in to the Red Thread app."
+        else:
+            msg['Subject'] = "Your Red Thread Appeal Has Been Reviewed"
+            status_color = "#f44336"
+            status_text = "Denied"
+            status_message = "After careful review, we were unable to approve your appeal at this time. Your account remains disabled."
+        
+        admin_response_html = ""
+        if admin_response:
+            admin_response_html = f"""
+            <div style="background-color: #f5f5f5; padding: 16px; border-radius: 8px; margin-top: 20px;">
+                <p style="color: #666; font-size: 12px; text-transform: uppercase; margin: 0 0 8px 0;">Admin Response</p>
+                <p style="color: #333; margin: 0;">{admin_response}</p>
+            </div>
+            """
+        
+        html_body = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 30px; border-radius: 12px;">
+            <div style="text-align: center; margin-bottom: 30px;">
+                <h1 style="color: #d32f2f; margin: 0;">Red Thread</h1>
+            </div>
+            
+            <p style="color: #333;">Hello {user_name},</p>
+            
+            <div style="background-color: {status_color}15; border-left: 4px solid {status_color}; padding: 16px; margin: 20px 0; border-radius: 4px;">
+                <p style="color: {status_color}; font-weight: bold; margin: 0 0 8px 0;">Appeal Status: {status_text}</p>
+                <p style="color: #333; margin: 0;">{status_message}</p>
+            </div>
+            
+            {admin_response_html}
+            
+            <p style="color: #666; margin-top: 30px; font-size: 14px;">
+                If you have any questions, please contact us at theredthreadapp@gmail.com
+            </p>
+            
+            <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+            <p style="color: #999; font-size: 12px; text-align: center;">
+                The Red Thread Team
+            </p>
+        </div>
+        """
+        
+        msg.attach(MIMEText(html_body, 'html'))
+        
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as server:
+            server.login(gmail_address, gmail_password)
+            server.send_message(msg)
+        
+        logger.info("Appeal decision email sent to: %s (approved: %s)", user_email, is_approved)
+        return True
+        
+    except Exception as e:
+        logger.error("Failed to send appeal decision email: %s", str(e))
+        return False
+
+@api_router.post("/admin/appeals/{appeal_id}/approve", response_model=AppealResponse)
+async def approve_appeal(appeal_id: str, request: ReviewAppealRequest, admin: User = Depends(get_admin_user)):
+    """Approve an appeal and re-enable the user's account (admin only)"""
+    appeals_ref = db.collection('appeals')
+    query = appeals_ref.where(filter=FieldFilter('id', '==', appeal_id)).limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
+        raise HTTPException(status_code=404, detail="Appeal not found")
+    
+    appeal_dict = deserialize_from_firestore(docs[0].to_dict())
+    
+    if appeal_dict.get('status') != 'pending':
+        raise HTTPException(status_code=400, detail="Appeal has already been reviewed")
+    
+    # Update appeal
+    update_data = {
+        'status': 'approved',
+        'reviewed_at': datetime.now(timezone.utc).isoformat(),
+        'reviewed_by': admin.id,
+        'admin_response': request.admin_response
+    }
+    db.collection('appeals').document(docs[0].id).update(update_data)
+    
+    # Re-enable the user's account
+    users_ref = db.collection('users')
+    user_query = users_ref.where(filter=FieldFilter('id', '==', appeal_dict['user_id'])).limit(1)
+    user_docs = list(user_query.stream())
+    
+    if user_docs:
+        user_update = {
+            'is_disabled': False,
+            'disable_reason': None,
+            'disabled_at': None,
+            'disabled_by': None
+        }
+        db.collection('users').document(user_docs[0].id).update(user_update)
+    
+    # Send email notification to user
+    await send_appeal_decision_email(
+        user_email=appeal_dict['user_email'],
+        user_name=appeal_dict['user_name'],
+        is_approved=True,
+        admin_response=request.admin_response
+    )
+    
+    updated_doc = db.collection('appeals').document(docs[0].id).get()
+    return AppealResponse(**deserialize_from_firestore(updated_doc.to_dict()))
+
+@api_router.post("/admin/appeals/{appeal_id}/deny", response_model=AppealResponse)
+async def deny_appeal(appeal_id: str, request: ReviewAppealRequest, admin: User = Depends(get_admin_user)):
+    """Deny an appeal (admin only)"""
+    appeals_ref = db.collection('appeals')
+    query = appeals_ref.where(filter=FieldFilter('id', '==', appeal_id)).limit(1)
+    docs = list(query.stream())
+    
+    if not docs:
+        raise HTTPException(status_code=404, detail="Appeal not found")
+    
+    appeal_dict = deserialize_from_firestore(docs[0].to_dict())
+    
+    if appeal_dict.get('status') != 'pending':
+        raise HTTPException(status_code=400, detail="Appeal has already been reviewed")
+    
+    # Update appeal
+    update_data = {
+        'status': 'denied',
+        'reviewed_at': datetime.now(timezone.utc).isoformat(),
+        'reviewed_by': admin.id,
+        'admin_response': request.admin_response
+    }
+    db.collection('appeals').document(docs[0].id).update(update_data)
+    
+    # Send email notification to user
+    await send_appeal_decision_email(
+        user_email=appeal_dict['user_email'],
+        user_name=appeal_dict['user_name'],
+        is_approved=False,
+        admin_response=request.admin_response
+    )
+    
+    updated_doc = db.collection('appeals').document(docs[0].id).get()
+    return AppealResponse(**deserialize_from_firestore(updated_doc.to_dict()))
+
+@api_router.post("/appeals/submit", response_model=AppealResponse)
+async def submit_appeal(email: str, request: AppealSubmitRequest):
+    """Submit an appeal for a disabled account (no auth required since user can't login)"""
+    # Find user by email
+    users_ref = db.collection('users')
+    query = users_ref.where(filter=FieldFilter('email', '==', email)).limit(1)
+    user_docs = list(query.stream())
+    
+    if not user_docs:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user_dict = deserialize_from_firestore(user_docs[0].to_dict())
+    user = User(**user_dict)
+    
+    # Check if account is actually disabled
+    if not getattr(user, 'is_disabled', False):
+        raise HTTPException(status_code=400, detail="Account is not disabled")
+    
+    # Check if there's already a pending appeal for this disable instance
+    appeals_ref = db.collection('appeals')
+    disable_count = getattr(user, 'disable_count', 0)
+    existing_query = appeals_ref.where(filter=FieldFilter('user_id', '==', user.id)).where(filter=FieldFilter('disable_instance', '==', disable_count)).limit(1)
+    existing_docs = list(existing_query.stream())
+    
+    if existing_docs:
+        raise HTTPException(status_code=400, detail="An appeal has already been submitted for this disable instance")
+    
+    # Get display name
+    user_name = user.email
+    if user.individual_profile and user.individual_profile.display_name:
+        user_name = user.individual_profile.display_name
+    elif user.organization_profile and user.organization_profile.name:
+        user_name = user.organization_profile.name
+    
+    # Create appeal
+    appeal = Appeal(
+        user_id=user.id,
+        user_email=user.email,
+        user_name=user_name,
+        appeal_message=request.appeal_message,
+        disable_reason=getattr(user, 'disable_reason', 'No reason provided'),
+        disable_instance=disable_count
+    )
+    
+    db.collection('appeals').document(appeal.id).set(
+        serialize_for_firestore(appeal.model_dump())
+    )
+    
+    return AppealResponse(**appeal.model_dump())
+
 # ============== PUBLIC ORGANIZATION ROUTES ==============
 
 @api_router.get("/organizations", response_model=List[UserResponse])

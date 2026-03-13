@@ -13,22 +13,33 @@ export default function AdminLayout() {
       <Stack.Screen
         name="index"
         options={{
+          title: 'Admin Dashboard',
+          headerBackVisible: false,
+          headerLeft: () => null,
+        }}
+      />
+      <Stack.Screen
+        name="organizations"
+        options={{
           title: 'Organization Approvals',
-          headerShown: false,
+          headerBackVisible: false,
+          headerLeft: () => null,
         }}
       />
       <Stack.Screen
         name="users"
         options={{
           title: 'User Management',
-          headerShown: false,
+          headerBackVisible: false,
+          headerLeft: () => null,
         }}
       />
       <Stack.Screen
         name="appeals"
         options={{
           title: 'Appeals',
-          headerShown: false,
+          headerBackVisible: false,
+          headerLeft: () => null,
         }}
       />
     </Stack>

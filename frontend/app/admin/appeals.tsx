@@ -45,7 +45,10 @@ export default function AppealsScreen() {
   }, [activeFilter]);
 
   useEffect(() => {
-    if (user?.user_type !== 'admin' && user?.user_type !== 'developer') {
+    // Don't do anything if user is null (logging out) - let root _layout.tsx handle redirect
+    if (!user) return;
+    
+    if (user.user_type !== 'admin' && user.user_type !== 'developer') {
       const timeout = setTimeout(() => {
         router.replace('/(tabs)');
       }, 0);
@@ -276,18 +279,18 @@ export default function AppealsScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
+        <View style={styles.adminInfo}>
+          <View style={styles.adminAvatar}>
+            <Ionicons name="document-text" size={24} color="#d32f2f" />
+          </View>
+          <View>
+            <Text style={styles.adminTitle}>Appeals</Text>
+            <Text style={styles.adminEmail}>{user?.email}</Text>
+          </View>
+        </View>
         <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
           <Ionicons name="arrow-back" size={20} color="#888" />
         </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Appeals</Text>
-          {pendingCount > 0 && (
-            <View style={styles.pendingBadge}>
-              <Text style={styles.pendingBadgeText}>{pendingCount}</Text>
-            </View>
-          )}
-        </View>
-        <View style={{ width: 40 }} />
       </View>
 
       <View style={styles.filters}>
@@ -378,6 +381,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#333',
   },
+  adminInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  adminAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(211, 47, 47, 0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   backButton: {
     width: 40,
     height: 40,
@@ -386,26 +402,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerCenter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+  adminTitle: {
     color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
-  pendingBadge: {
-    backgroundColor: '#ff9800',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  pendingBadgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: 'bold',
+  adminEmail: {
+    color: '#888',
+    fontSize: 13,
   },
   filters: {
     flexDirection: 'row',
